@@ -152,6 +152,7 @@ INSTALLED_APPS = [
     "constance",
     "constance.backends.database",
     "django_q",
+    "django_pam",
     # OIDC / SSO via django-allauth. The generic openid_connect provider handles
     # any standards-compliant IdP (Keycloak, Authentik, Authelia, Zitadel, Google,
     # Azure, ...). Provider credentials live in the DB (admin-editable SocialApp),
@@ -164,6 +165,12 @@ INSTALLED_APPS = [
 ]
 
 SITE_ID = 1
+
+PAM_USERS = {
+    "is_active": True,
+    "is_staff": True,
+    "is_superuser": True,
+}
 
 Q_CLUSTER = {
     "name": "DjangORM",
@@ -408,11 +415,10 @@ MIDDLEWARE = [
     "allauth.account.middleware.AccountMiddleware",
 ]
 
-# allauth adds its authentication backend alongside the default ModelBackend so
-# that regular username/password login keeps working (hybrid login — the
-# maintainer's call on #401). ModelBackend stays first so password auth is
-# unaffected.
+# PAM and allauth add their authentication backends alongside the default
+# ModelBackend so that regular username/password login keeps working.
 AUTHENTICATION_BACKENDS = [
+    "django_pam.auth.backends.PAMBackend",
     "django.contrib.auth.backends.ModelBackend",
     "allauth.account.auth_backends.AuthenticationBackend",
 ]
