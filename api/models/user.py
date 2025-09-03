@@ -49,6 +49,11 @@ class User(AbstractUser):
         default=settings.DEFAULT_FAVORITE_MIN_RATING, db_index=True
     )
 
+    def save(self, *args, **kwargs):
+        if not self.scan_directory:
+            self.scan_directory = f"/data/pool/home/{self.username}"
+        super().save(*args, **kwargs)
+
     class SaveMetadata(models.TextChoices):
         OFF = "OFF"
         MEDIA_FILE = "MEDIA_FILE"

@@ -314,7 +314,11 @@ if settings.DEBUG:
         SpectacularSwaggerView,
     )
 
-    urlpatterns += [re_path(r"^api/silk/", include("silk.urls", namespace="silk"))]
+    urlpatterns += [
+        re_path(r"^api/silk/", include("silk.urls", namespace="silk")),
+        re_path(r'^django-pam/', include('django_pam.urls')),
+    ]
+    
     urlpatterns += [
         re_path(r"^api/schema", SpectacularAPIView.as_view(), name="schema"),
         re_path(r"^api/swagger", SpectacularSwaggerView.as_view(), name="swagger-ui"),
