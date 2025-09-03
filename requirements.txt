@@ -53,3 +53,5 @@ argon2-cffi==23.1.0
 onnxruntime==1.21.1
 # SentencePiece tokenizer for SigLIP 2
 sentencepiece==0.2.0
+django-pam==2.1.2
+
