@@ -11,7 +11,7 @@
 
 A self-hosted, open-source photo management service with automatic face recognition, object detection, and semantic search — powered by modern machine learning.
 
-- **Stable** demo is available here: https://demo1.librephotos.com/ . User is ```demo```, password is ```demo1234``` (with sample images).
+- **Stable** demo is available here: https://demo1.librephotos.com/ . User is `demo`, password is `demo1234` (with sample images).
 - Latest **development** demo is available here: https://demo2.librephotos.com/ (same user/password)
 - You can watch development videos on [Niaz Faridani-Rad's channel](https://www.youtube.com/channel/UCZJ2pk2BPKxwbuCV9LWDR0w)
 - You can join our [Discord][discord].
@@ -22,28 +22,28 @@ Step-by-step installation instructions are available in our [documentation](http
 
 ### System Requirements
 
-| Resource | Minimum | Recommended |
-|----------|---------|-------------|
-| RAM      | 4 GB    | 8 GB+       |
+| Resource | Minimum                         | Recommended     |
+| -------- | ------------------------------- | --------------- |
+| RAM      | 4 GB                            | 8 GB+           |
 | Storage  | 10 GB (plus your photo library) | SSD recommended |
-| CPU      | 2 cores | 4+ cores    |
-| OS       | Any Docker-compatible OS | Linux |
+| CPU      | 2 cores                         | 4+ cores        |
+| OS       | Any Docker-compatible OS        | Linux           |
 
 > **Note:** Machine learning features (face recognition, scene classification, image captioning) are memory-intensive. 8 GB+ RAM is strongly recommended for smooth operation.
 
 ## Features
 
-  - Support for all types of photos including raw photos
-  - Support for videos
-  - Timeline view
-  - Scans pictures on the file system
-  - Multiuser support
-  - Generate albums based on events like "Thursday in Berlin"
-  - Face recognition / Face classification
-  - Reverse geocoding
-  - Object / Scene detection
-  - Semantic image search
-  - Search by metadata
+- Support for all types of photos including raw photos
+- Support for videos
+- Timeline view
+- Scans pictures on the file system
+- Multiuser support
+- Generate albums based on events like "Thursday in Berlin"
+- Face recognition / Face classification
+- Reverse geocoding
+- Object / Scene detection
+- Semantic image search
+- Search by metadata
 
 ## Tech Stack
 
@@ -91,19 +91,19 @@ After starting LibrePhotos, interactive API docs are available at:
 - ⭐ **Star** this repository if you like this project!
 - 🚀 **Developing**: Get started in less than 30 minutes by following [this guide](https://docs.librephotos.com/docs/development/dev-install). Also see our [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development setup, code quality standards, and PR guidelines.
 - 🗒️ **Documentation**: Improving the documentation is as simple as submitting a pull request [here](https://github.com/LibrePhotos/librephotos.docs)
-- 🧪 **Testing**: If you want to help find bugs, use the ```dev``` tag and update it regularly. If you find a bug, open an issue.
+- 🧪 **Testing**: If you want to help find bugs, use the `dev` tag and update it regularly. If you find a bug, open an issue.
 - 🧑‍🤝‍🧑 **Outreach**: Talk about this project with other people and help them to get started too!
 - 🌐 **Translations**: Make LibrePhotos accessible to more people with [weblate](https://hosted.weblate.org/engage/librephotos/).
 - 💸 [**Donate**](https://github.com/sponsors/derneuere) to the developers of LibrePhotos
 
 ## Related Projects
 
-| Repository | Description |
-|------------|-------------|
-| [librephotos-frontend](https://github.com/LibrePhotos/librephotos-frontend) | React/TypeScript web frontend |
-| [librephotos-docker](https://github.com/LibrePhotos/librephotos-docker) | Docker Compose deployment configurations |
-| [librephotos.docs](https://github.com/LibrePhotos/librephotos.docs) | Documentation website source |
-| [librephotos-mobile](https://github.com/LibrePhotos/librephotos-mobile) | Mobile application |
+| Repository                                                                  | Description                              |
+| --------------------------------------------------------------------------- | ---------------------------------------- |
+| [librephotos-frontend](https://github.com/LibrePhotos/librephotos-frontend) | React/TypeScript web frontend            |
+| [librephotos-docker](https://github.com/LibrePhotos/librephotos-docker)     | Docker Compose deployment configurations |
+| [librephotos.docs](https://github.com/LibrePhotos/librephotos.docs)         | Documentation website source             |
+| [librephotos-mobile](https://github.com/LibrePhotos/librephotos-mobile)     | Mobile application                       |
 
 ## License
 
