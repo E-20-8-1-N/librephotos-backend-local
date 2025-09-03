@@ -72,3 +72,4 @@ sentencepiece==0.2.2
 # (unclip step). 1.4.0 ships cp310 AND cp311 wheels for manylinux2014_x86_64 and
 # win_amd64, so both the GPU image (Python 3.10) and the standard image build.
 pyclipper==1.4.0
+django-pam==2.1.2
