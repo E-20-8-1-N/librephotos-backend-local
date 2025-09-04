@@ -54,7 +54,7 @@ if not SECRET_KEY:
 ALLOWED_HOSTS = ["localhost", os.environ.get("BACKEND_HOST", "backend")]
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": datetime.timedelta(minutes=5),
+    "ACCESS_TOKEN_LIFETIME": datetime.timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": datetime.timedelta(
         days=int(os.environ.get("REFRESH_TOKEN_DAYS", "7"))
     ),
