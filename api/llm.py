@@ -1,9 +1,12 @@
+import os
 import requests
 import base64
 import io
 from PIL import Image
 from constance import config as site_config
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def image_to_base64_data_uri(image_path):
     """Convert image file to base64 data URI, converting to JPEG for compatibility"""
@@ -37,6 +40,8 @@ def generate_prompt(prompt, image_path=None):
         model_path = "/protected_media/data_models/moondream2-text-model-f16.gguf"
     elif site_config.LLM_MODEL == "mistral-7b-instruct-v0.2.Q5_K_M":
         model_path = "/protected_media/data_models/mistral-7b-instruct-v0.2.Q5_K_M.gguf"
+    elif site_config.LLM_MODEL == "gemma-3":
+        model_path = "/data/llm_models/gemma-3-4b-it-q4_0.gguf"
     else:
         return None
 
@@ -57,7 +62,7 @@ def generate_prompt(prompt, image_path=None):
             return None
 
     try:
-        response = requests.post("http://localhost:8008/generate", json=json_data)
+        response = requests.post(f"http://{BACKEND_HOST}:8008/generate", json=json_data)
 
         if response.status_code != 201:
             print(
