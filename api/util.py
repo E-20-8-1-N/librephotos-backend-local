@@ -6,6 +6,9 @@ import exiftool
 import requests
 from django.conf import settings
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
+
 logger = logging.getLogger("ownphotos")
 formatter = logging.Formatter(
     "%(asctime)s : %(filename)s : %(funcName)s : %(lineno)s : %(levelname)s : %(message)s"
@@ -106,7 +109,7 @@ def get_metadata(media_file, tags, try_sidecar=True, struct=False):
         "files_by_reverse_priority": files_by_reverse_priority,
         "struct": struct,
     }
-    response = requests.post("http://localhost:8010/get-tags", json=json).json()
+    response = requests.post(f"http://{BACKEND_HOST}:8010/get-tags", json=json).json()
     return response["values"]
 
 
