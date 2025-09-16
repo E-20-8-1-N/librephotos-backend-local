@@ -8,6 +8,9 @@ from librephotos.logging_bootstrap import (
     LOG_FILE_HANDLER_NAME,
 )
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
+
 logger = logging.getLogger("ownphotos")
 
 

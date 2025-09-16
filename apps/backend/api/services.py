@@ -13,6 +13,8 @@ from api.models import Photo
 from api.util import logger
 from librephotos.logging_bootstrap import DEFAULT_LOG_LEVEL
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
+
 # Track services that should not be restarted due to system incompatibility
 INCOMPATIBLE_SERVICES = set()
 
@@ -136,7 +138,9 @@ def is_healthy(service):
     try:
         from api.http_timeouts import HEALTH_CHECK
 
-        res = requests.get(f"http://localhost:{port}/health", timeout=HEALTH_CHECK)
+        res = requests.get(
+            f"http://{BACKEND_HOST}:{port}/health", timeout=HEALTH_CHECK
+        )
         # If response has timestamp, check if it needs to be restarted
         if res.json().get("last_request_time") is not None:
             if res.json()["last_request_time"] < time.time() - 120:

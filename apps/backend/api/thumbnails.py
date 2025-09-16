@@ -8,6 +8,7 @@ from django.conf import settings
 from api import util
 from api.models.file import is_raw
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 _ORIENTATION_TRANSFORMS = {
     2: lambda image: image.flip(pyvips.enums.Direction.HORIZONTAL),
@@ -68,7 +69,7 @@ def _request_raw_thumbnail(input_path, output_height, complete_path, local_orien
     from api.http_timeouts import THUMBNAIL
 
     response = requests.post(
-        "http://localhost:8003/", json=json, timeout=THUMBNAIL
+        f"http://{BACKEND_HOST}:8003/", json=json, timeout=THUMBNAIL
     ).json()
     # The RAW service applies auto-orientation internally.  Apply
     # any user-specified rotation on top.

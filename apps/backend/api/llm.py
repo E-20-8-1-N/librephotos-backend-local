@@ -1,6 +1,8 @@
-import requests
 import base64
 import io
+import os
+
+import requests
 from PIL import Image
 from constance import config as site_config
 
@@ -11,7 +13,10 @@ MODEL_PATHS = {
     "mistral-7b-instruct-v0.2.Q5_K_M": (
         "/protected_media/data_models/mistral-7b-instruct-v0.2.Q5_K_M.gguf"
     ),
+    "gemma-3": "/data/llm_models/gemma-3-4b-it-q4_0.gguf",
 }
+
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 
 def image_to_base64_data_uri(image_path):
@@ -53,7 +58,7 @@ def build_generation_payload(prompt, model_path, image_path):
 
 def request_generation(json_data):
     response = requests.post(
-        "http://localhost:8008/generate", json=json_data, timeout=LLM_GEN
+        f"http://{BACKEND_HOST}:8008/generate", json=json_data, timeout=LLM_GEN
     )
 
     if response.status_code != 201:
