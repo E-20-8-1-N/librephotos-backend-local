@@ -217,7 +217,6 @@ CONSTANCE_ADDITIONAL_FIELDS = {
                 ("none", "None"),
                 ("mistral-7b-instruct-v0.2.Q5_K_M", "Mistral 7B Instruct v0.2 Q5 K M"),
                 ("moondream", "Moondream Visual LLM"),
-                ("gemma-3", "Google Gemma-3 LLM"),
             ),
         },
     ],
@@ -294,8 +293,8 @@ CONSTANCE_CONFIG = {
         "map_tile_provider",
     ),
     "IMAGE_DIRS": ("/data", "Image dirs list (serialized json)", str),
-    "CAPTIONING_MODEL": ("im2txt", "Captioning model", "captioning_model"),
-    "LLM_MODEL": ("None", "Large Language Model", "llm_model"),
+    "CAPTIONING_MODEL": ("moondream", "Captioning model", "captioning_model"),
+    "LLM_MODEL": ("moondream", "Large Language Model", "llm_model"),
     "TAGGING_MODEL": ("places365", "Tagging model", "tagging_model"),
     "OCR_MODEL": (
         "None",
