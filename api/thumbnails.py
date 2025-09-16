@@ -8,6 +8,8 @@ from django.conf import settings
 from api import util
 from api.models.file import is_raw
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def create_thumbnail(input_path, output_height, output_path, hash, file_type):
     try:
@@ -21,7 +23,7 @@ def create_thumbnail(input_path, output_height, output_path, hash, file_type):
                     "destination": complete_path,
                     "height": output_height,
                 }
-                response = requests.post("http://localhost:8003/", json=json).json()
+                response = requests.post(f"http://{BACKEND_HOST}:8003/", json=json).json()
                 return response["thumbnail"]
             else:
                 # only encode raw image in worse case, smaller thumbnails can get created from the big thumbnail instead

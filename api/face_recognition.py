@@ -1,6 +1,9 @@
+import os
 import numpy as np
 import requests
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def get_face_encodings(image_path, known_face_locations):
     json = {
@@ -8,7 +11,7 @@ def get_face_encodings(image_path, known_face_locations):
         "face_locations": known_face_locations,
     }
     face_encoding = requests.post(
-        "http://localhost:8005/face-encodings", json=json
+        f"http://{BACKEND_HOST}:8005/face-encodings", json=json
     ).json()
 
     face_encodings_list = face_encoding["encodings"]
@@ -20,6 +23,6 @@ def get_face_encodings(image_path, known_face_locations):
 def get_face_locations(image_path, model="hog"):
     json = {"source": image_path, "model": model}
     face_locations = requests.post(
-        "http://localhost:8005/face-locations", json=json
+        f"http://{BACKEND_HOST}:8005/face-locations", json=json
     ).json()
     return face_locations["face_locations"]
