@@ -1,3 +1,4 @@
+import os
 from django.db import models
 from django.db.models import Q
 
@@ -7,6 +8,8 @@ from api.image_captioning import generate_caption
 from api.llm import generate_prompt
 from api.models.user import User
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 class PhotoCaption(models.Model):
     """Model for handling image captions and related functionality"""
@@ -286,7 +289,7 @@ class PhotoCaption(models.Model):
                 "confidence": confidence,
             }
             res_places365 = requests.post(
-                "http://localhost:8011/generate-tags", json=json_data
+                f"http://{BACKEND_HOST}:8011/generate-tags", json=json_data
             ).json()["tags"]
 
             if res_places365 is None:

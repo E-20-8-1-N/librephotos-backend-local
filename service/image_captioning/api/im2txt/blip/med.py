@@ -39,6 +39,49 @@ from transformers.utils import logging
 
 logger = logging.get_logger(__name__)
 
+def apply_chunking_to_forward(forward_fn, chunk_size, chunk_dim, *input_tensors):
+    if chunk_size > 0:
+        assert all(
+            input_tensor.shape[chunk_dim] == input_tensors[0].shape[chunk_dim]
+            for input_tensor in input_tensors
+        ), "All input tensors must have the same shape in the chunking dimension"
+        num_chunks = input_tensors[0].shape[chunk_dim] // chunk_size
+        if input_tensors[0].shape[chunk_dim] % chunk_size != 0:
+            num_chunks += 1
+        input_tensors_chunks = [
+            input_tensor.chunk(num_chunks, dim=chunk_dim) for input_tensor in input_tensors
+        ]
+        output_chunks = []
+        for chunk_idx in range(num_chunks):
+            chunk_inputs = [input_chunks[chunk_idx] for input_chunks in input_tensors_chunks]
+            output_chunks.append(forward_fn(*chunk_inputs))
+        return torch.cat(output_chunks, dim=chunk_dim)
+    return forward_fn(*input_tensors)
+
+def find_pruneable_heads_and_indices(heads, num_heads, head_size, already_pruned_heads):
+    mask = torch.ones(num_heads, head_size)
+    heads = set(heads) - already_pruned_heads
+    for head in heads:
+        mask[head] = 0
+    mask = mask.view(-1).contiguous()
+    index = torch.arange(len(mask))[mask == 1].long()
+    return heads, index
+
+def prune_linear_layer(layer, index, dim=0):
+    index = index.to(layer.weight.device)
+    W = layer.weight.index_select(dim, index).clone().detach()
+    if layer.bias is not None:
+        if dim == 1:
+            b = layer.bias.clone().detach()
+        else:
+            b = layer.bias[index].clone().detach()
+    new_size = list(layer.weight.size())
+    new_size[dim] = len(index)
+    new_layer = torch.nn.Linear(new_size[1], new_size[0], bias=layer.bias is not None).to(layer.weight.device)
+    new_layer.weight.data = W.clone().detach()
+    if layer.bias is not None:
+        new_layer.bias.data = b.clone().detach()
+    return new_layer
 
 class BertEmbeddings(nn.Module):
     """Construct the embeddings from word and position embeddings."""
