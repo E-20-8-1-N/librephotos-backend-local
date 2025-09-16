@@ -117,7 +117,7 @@ def create_animated_thumbnail(input_path, output_height, output_path, hash, file
     try:
         output = os.path.join(
             settings.MEDIA_ROOT, output_path, hash + file_type
-        )
+        ).strip()
         command = [
             "ffmpeg",
             "-i",
@@ -142,7 +142,7 @@ def create_thumbnail_for_video(input_path, output_path, hash, file_type):
     try:
         output = os.path.join(
             settings.MEDIA_ROOT, output_path, hash + file_type
-        )
+        ).strip()
         command = [
             "ffmpeg",
             "-i",
@@ -163,11 +163,11 @@ def create_thumbnail_for_video(input_path, output_path, hash, file_type):
 
 def does_static_thumbnail_exist(output_path, hash):
     return os.path.exists(
-        os.path.join(settings.MEDIA_ROOT, output_path, hash + ".webp")
+        os.path.join(settings.MEDIA_ROOT, output_path, hash + ".webp").strip()
     )
 
 
 def does_video_thumbnail_exist(output_path, hash):
     return os.path.exists(
-        os.path.join(settings.MEDIA_ROOT, output_path, hash + ".mp4")
+        os.path.join(settings.MEDIA_ROOT, output_path, hash + ".mp4").strip()
     )
