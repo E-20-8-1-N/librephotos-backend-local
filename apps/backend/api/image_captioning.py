@@ -1,8 +1,11 @@
+import os
+
 import requests
 from constance import config as site_config
 
 from api.http_timeouts import CAPTION, HEALTH_CHECK
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def generate_caption(image_path, blip=False, prompt=None):
     # Check if Moondream is selected as captioning model
@@ -18,7 +21,9 @@ def generate_caption(image_path, blip=False, prompt=None):
         }
         try:
             response = requests.post(
-                "http://localhost:8008/generate", json=json_data, timeout=CAPTION
+                f"http://{BACKEND_HOST}:8008/generate",
+                json=json_data,
+                timeout=CAPTION,
             )
 
             if response.status_code != 201:
@@ -48,11 +53,15 @@ def generate_caption(image_path, blip=False, prompt=None):
         "blip": blip,
     }
     caption_response = requests.post(
-        "http://localhost:8007/generate-caption", json=json_data, timeout=CAPTION
+        f"http://{BACKEND_HOST}:8007/generate-caption",
+        json=json_data,
+        timeout=CAPTION,
     ).json()
 
     return caption_response["caption"]
 
 
 def unload_model():
-    requests.get("http://localhost:8007/unload-model", timeout=HEALTH_CHECK)
+    requests.get(
+        f"http://{BACKEND_HOST}:8007/unload-model", timeout=HEALTH_CHECK
+    )

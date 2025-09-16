@@ -1,8 +1,11 @@
+import os
 import numpy as np
 import requests
 from django.conf import settings
 
 from api.http_timeouts import CLIP_EMBED
+
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 dir_clip_ViT_B_32_model = settings.CLIP_ROOT
 
@@ -13,7 +16,9 @@ def create_clip_embeddings(imgs):
         "model": dir_clip_ViT_B_32_model,
     }
     clip_embeddings = requests.post(
-        "http://localhost:8006/clip-embeddings", json=json, timeout=CLIP_EMBED
+        f"http://{BACKEND_HOST}:8006/clip-embeddings",
+        json=json,
+        timeout=CLIP_EMBED,
     ).json()
 
     imgs_emb = clip_embeddings["imgs_emb"]
@@ -31,7 +36,9 @@ def calculate_query_embeddings(query):
         "model": dir_clip_ViT_B_32_model,
     }
     query_embedding = requests.post(
-        "http://localhost:8006/query-embeddings", json=json, timeout=CLIP_EMBED
+        f"http://{BACKEND_HOST}:8006/query-embeddings",
+        json=json,
+        timeout=CLIP_EMBED,
     ).json()
 
     emb = query_embedding["emb"]

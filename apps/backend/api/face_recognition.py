@@ -1,4 +1,5 @@
 import html
+import os
 import re
 import time
 from html.parser import HTMLParser
@@ -14,6 +15,7 @@ from constance import config as site_config
 FACE_MAX_ATTEMPTS = 3
 FACE_RETRY_BACKOFF = 0.5
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 class _HTMLTextExtractor(HTMLParser):
     """Minimal HTML parser that collects visible text content."""
@@ -126,7 +128,7 @@ def get_face_encodings(image_path, known_face_locations):
         "model_name": site_config.FACE_RECOGNITION_MODEL,
     }
     face_encoding = _post_to_face_service(
-        "http://localhost:8005/face-encodings", payload
+        f"http://{BACKEND_HOST}:8005/face-encodings", payload
     )
 
     face_encodings_list = face_encoding["encodings"]
@@ -141,6 +143,6 @@ def get_face_locations(image_path):
         "model_name": site_config.FACE_RECOGNITION_MODEL,
     }
     face_locations = _post_to_face_service(
-        "http://localhost:8005/face-locations", payload
+        f"http://{BACKEND_HOST}:8005/face-locations", payload
     )
     return face_locations["face_locations"]

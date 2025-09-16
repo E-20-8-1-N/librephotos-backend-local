@@ -1,3 +1,5 @@
+import os
+
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
@@ -8,6 +10,7 @@ from api.image_captioning import generate_caption
 from api.llm import generate_prompt
 from api.models.user import User
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 class PhotoCaption(models.Model):
     """Model for handling image captions and related functionality"""
@@ -308,7 +311,9 @@ class PhotoCaption(models.Model):
                 "tagging_model": tagging_model,
             }
             response = requests.post(
-                "http://localhost:8011/generate-tags", json=json_data, timeout=TAGS
+                f"http://{BACKEND_HOST}:8011/generate-tags",
+                json=json_data,
+                timeout=TAGS,
             )
 
             if not response.ok:

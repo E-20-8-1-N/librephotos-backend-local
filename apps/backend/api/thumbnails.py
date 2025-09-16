@@ -8,6 +8,7 @@ from django.conf import settings
 from api import util
 from api.models.file import is_raw
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def _apply_local_orientation(
     image: pyvips.Image, local_orientation: int
@@ -71,7 +72,9 @@ def create_thumbnail(
                 from api.http_timeouts import THUMBNAIL
 
                 response = requests.post(
-                    "http://localhost:8003/", json=json, timeout=THUMBNAIL
+                    f"http://{BACKEND_HOST}:8003/",
+                    json=json,
+                    timeout=THUMBNAIL,
                 ).json()
                 # The RAW service applies auto-orientation internally.  Apply
                 # any user-specified rotation on top.
