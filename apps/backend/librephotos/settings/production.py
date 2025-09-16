@@ -7,6 +7,7 @@ from librephotos.logging_bootstrap import (
     resolve_to_console,
 )
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE_LOGS = os.environ.get("BASE_LOGS", "/logs/")
 BASE_DATA = os.environ.get("BASE_DATA", "/")
@@ -123,7 +124,7 @@ if not SECRET_KEY:
         SECRET_KEY = f.read().strip()
         print("use SECRET_KEY from file")
 
-ALLOWED_HOSTS = ["localhost", os.environ.get("BACKEND_HOST", "backend")]
+ALLOWED_HOSTS = ["localhost", BACKEND_HOST]
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": datetime.timedelta(minutes=60),
@@ -237,6 +238,7 @@ CONSTANCE_ADDITIONAL_FIELDS = {
                 ("none", "None"),
                 ("mistral-7b-instruct-v0.2.Q5_K_M", "Mistral 7B Instruct v0.2 Q5 K M"),
                 ("moondream", "Moondream Visual LLM"),
+                ("gemma-3", "Google Gemma-3 LLM"),
             ),
         },
     ],
@@ -383,7 +385,7 @@ CORS_ALLOW_HEADERS = (
 CORS_EXPOSE_HEADERS = ("x-media-error",)
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]
+CORS_ALLOWED_ORIGINS = [f"http://{BACKEND_HOST}:3000"]
 
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
@@ -485,7 +487,7 @@ USE_L10N = True
 USE_TZ = True
 
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
+    f"http://{BACKEND_HOST}:3000",
 ]
 if os.environ.get("CSRF_TRUSTED_ORIGINS"):
     CSRF_TRUSTED_ORIGINS.append(os.environ.get("CSRF_TRUSTED_ORIGINS"))
@@ -506,7 +508,7 @@ CHUNKED_UPLOAD_PATH = ""
 CHUNKED_UPLOAD_TO = os.path.join("chunked_uploads")
 
 DEFAULT_FAVORITE_MIN_RATING = os.environ.get("DEFAULT_FAVORITE_MIN_RATING", 4)
-IMAGE_SIMILARITY_SERVER = "http://localhost:8002"
+IMAGE_SIMILARITY_SERVER = f"http://{BACKEND_HOST}:8002"
 
 # Email / SMTP configuration.
 #
