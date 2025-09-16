@@ -1,3 +1,4 @@
+import os
 from django.db import models
 from django.db.models import Q
 
@@ -7,6 +8,8 @@ from api.image_captioning import generate_caption
 from api.llm import generate_prompt
 from api.models.user import User
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 class PhotoCaption(models.Model):
     """Model for handling image captions and related functionality"""
@@ -296,24 +299,23 @@ class PhotoCaption(models.Model):
                 "confidence": confidence,
                 "tagging_model": tagging_model,
             }
-            response = requests.post(
-                "http://localhost:8011/generate-tags", json=json_data
-            )
-            tags_result = response.json()["tags"]
+            res_places365 = requests.post(
+                f"http://{BACKEND_HOST}:8011/generate-tags", json=json_data
+            ).json()["tags"]
 
-            if tags_result is None:
+            if res_places365 is None:
                 return
             if self.captions_json is None:
                 self.captions_json = {}
 
             # Store under the model-specific key
-            self.captions_json[tagging_model] = tags_result
+            self.captions_json[tagging_model] = res_places365
             self.recreate_search_captions()
 
             if tagging_model == "siglip2":
-                self._update_siglip2_album_things(tags_result)
+                self._update_siglip2_album_things(res_places365)
             else:
-                self._update_places365_album_things(tags_result)
+                self._update_places365_album_things(res_places365)
 
             if commit:
                 self.save()

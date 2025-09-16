@@ -4,6 +4,9 @@ import os.path
 
 from django.conf import settings
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
+
 logger = logging.getLogger("ownphotos")
 formatter = logging.Formatter(
     "%(asctime)s : %(filename)s : %(funcName)s : %(lineno)s : %(levelname)s : %(message)s"

@@ -1,6 +1,9 @@
+import os
 import requests
 from constance import config as site_config
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def generate_caption(image_path, blip=False, prompt=None):
     # Check if Moondream is selected as captioning model
@@ -15,7 +18,7 @@ def generate_caption(image_path, blip=False, prompt=None):
             "max_tokens": 256,
         }
         try:
-            response = requests.post("http://localhost:8008/generate", json=json_data)
+            response = requests.post(f"http://{BACKEND_HOST}:8008/generate", json=json_data)
 
             if response.status_code != 201:
                 print(
@@ -44,11 +47,11 @@ def generate_caption(image_path, blip=False, prompt=None):
         "blip": blip,
     }
     caption_response = requests.post(
-        "http://localhost:8007/generate-caption", json=json_data
+        f"http://{BACKEND_HOST}:8007/generate-caption", json=json_data
     ).json()
 
     return caption_response["caption"]
 
 
 def unload_model():
-    requests.get("http://localhost:8007/unload-model")
+    requests.get(f"http://{BACKEND_HOST}:8007/unload-model")
