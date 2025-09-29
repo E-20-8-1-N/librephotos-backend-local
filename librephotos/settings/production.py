@@ -264,7 +264,7 @@ USE_L10N = True
 USE_TZ = True
 
 CSRF_TRUSTED_ORIGINS = [
-    "http://{BACKEND_HOST}:3000",
+    f"http://{BACKEND_HOST}:3000",
 ]
 if os.environ.get("CSRF_TRUSTED_ORIGINS"):
     CSRF_TRUSTED_ORIGINS.append(os.environ.get("CSRF_TRUSTED_ORIGINS"))
