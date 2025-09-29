@@ -3,6 +3,12 @@ from django.db import models
 import api.models
 from api import util
 
+import os
+import requests
+from constance import config as site_config
+
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -51,6 +57,54 @@ class PhotoSearch(models.Model):
                 im2txt_caption = captions_json.get("im2txt", "")
                 if im2txt_caption:
                     search_captions += im2txt_caption + " "
+                else:
+                    if site_config.CAPTIONING_MODEL == "moondream":
+                        # Use custom prompt if provided, otherwise use default caption prompt
+                        if prompt is None:
+                            prompt = "Describe this image in a short, concise caption."
+
+                        json_data = {
+                            "image_path": self.photo.image_path,
+                            "prompt": prompt,
+                            "max_tokens": 256,
+                        }
+                        try:
+                            response = requests.post(f"http://{BACKEND_HOST}:8008/generate", json=json_data)
+
+                            if response.status_code != 201:
+                                print(
+                                    f"Error with Moondream captioning service: HTTP {response.status_code} - {response.text}"
+                                )
+                                return "Error generating caption with Moondream: Service unavailable"
+
+                            response_data = response.json()
+                            return response_data["response"]
+                        except requests.exceptions.ConnectionError:
+                            print(
+                                "Error with Moondream captioning service: Cannot connect to LLM service on port 8008"
+                            )
+                            return "Error generating caption with Moondream: Service unavailable"
+                        except requests.exceptions.Timeout:
+                            print("Error with Moondream captioning service: Request timeout")
+                            return "Error generating caption with Moondream: Request timeout"
+                        except Exception as e:
+                            print(f"Error with Moondream captioning service: {e}")
+                            return "Error generating caption with Moondream"
+
+                    blip = False
+                    if site_config.CAPTIONING_MODEL == "blip_base_capfilt_large":
+                        blip = True
+                    # Original implementation for other models
+                    json_data = {
+                        "image_path": self.photo.image_path,
+                        "onnx": False,
+                        "blip": blip,
+                    }
+                    caption_response = requests.post(
+                        f"http://{BACKEND_HOST}:8007/generate-caption", json=json_data
+                    ).json()
+
+                    search_captions += caption_response["caption"] + " " 
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
