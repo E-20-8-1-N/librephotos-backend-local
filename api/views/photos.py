@@ -22,6 +22,7 @@ from api.views.pagination import (
     RegularResultsSetPagination,
     StandardResultsSetPagination,
 )
+from api.custom_captioning import generate_and_store_caption
 
 
 class RecentlyAddedPhotoListViewSet(ListViewSet):
@@ -532,19 +533,29 @@ class GeneratePhotoCaption(APIView):
                 status=400,
             )
 
-        caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
-        res = caption_instance.generate_captions_im2txt()
+        # caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
+        # res = caption_instance.generate_captions_im2txt()
 
-        if res:
+        # if res:
+        #     return Response({"status": True})
+        # else:
+        #     return Response(
+        #         {
+        #             "status": False,
+        #             "message": "Failed to generate caption. Check service logs for details.",
+        #         },
+        #         status=500,
+        #     )
+        ok = generate_and_store_caption(photo, force=True)
+        if ok:
             return Response({"status": True})
-        else:
-            return Response(
-                {
-                    "status": False,
-                    "message": "Failed to generate caption. Check service logs for details.",
-                },
-                status=500,
-            )
+        return Response(
+            {
+                "status": False,
+                "message": "Failed to generate caption. Check service logs for details.",
+            },
+            status=500,
+        )
 
 
 class SavePhotoCaption(APIView):

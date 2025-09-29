@@ -38,6 +38,7 @@ from api.schemas.site_settings import site_settings_schema
 from api.serializers.album_user import AlbumUserEditSerializer, AlbumUserListSerializer
 from api.util import logger
 from api.views.pagination import StandardResultsSetPagination
+from api.custom_captioning import generate_and_store_caption
 
 
 def custom_exception_handler(exc, context):
@@ -415,6 +416,46 @@ class FullScanPhotosView(APIView):
         return self._scan_photos(request)
 
     def _scan_photos(self, request):
+        # chain = Chain()
+        # if not do_all_models_exist():
+        #     chain.append(download_models, request.user)
+        try:
+            job_id = uuid.uuid4()
+            # chain.append(
+            #     scan_photos, request.user, True, job_id, request.user.scan_directory
+            # )
+            # chain.run()
+            processed = []
+            failed_captions = []
+            # Hypothetical loop over photos discovered/imported
+            for photo in self._iterate_new_or_scanned_photos(request, request.user):
+                # existing logic: hashing, metadata extraction, face queueing, etc.
+                processed.append(photo.image_hash)
+
+                # Caption generation (non-fatal if it fails)
+                ok = generate_and_store_caption(photo)
+                if not ok:
+                    failed_captions.append(photo.image_hash)
+
+            # ... finalize job, return response ...
+            return Response(
+                {
+                    "status": True,
+                    "job_id": job_id,
+                    "processed": processed,
+                    "caption_failures": failed_captions,
+                }
+            )
+            # return Response({"status": True, "job_id": job_id})
+        except BaseException:
+            logger.exception("An Error occurred")
+            return Response({"status": False})
+        
+    def _iterate_new_or_scanned_photos(self, request, user):
+        """
+        Placeholder generator. Replace with your actual scanning logic.
+        Yield Photo objects.
+        """
         chain = Chain()
         if not do_all_models_exist():
             chain.append(download_models, request.user)
