@@ -33,17 +33,8 @@ class ModelChecksumError(Exception):
 
 
 ML_MODELS = [
-    # {
-    #     "id": 1,
-    #     "name": "im2txt",
-    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
-    #     "type": MlTypes.CAPTIONING,
-    #     "unpack-command": "tar -zxC",
-    #     "target-dir": "im2txt",
-    #     "sha256": "980670c0365c0e32b5fecfc0907bfee4742bcd6a40e0d6ac5692c69bbd49ccc4",
-    # },
     {
-        "id": 2,
+        "id": 1,
         "name": "clip-embeddings",
         "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/clip-embeddings.tar.gz",
         "type": MlTypes.CLIP,
@@ -52,7 +43,7 @@ ML_MODELS = [
         "sha256": "3d2f66350b75127024603dfaff55d4b981461363072d9697aa88d472440ecb4e",
     },
     {
-        "id": 3,
+        "id": 2,
         "name": "places365",
         "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/places365.tar.gz",
         "type": MlTypes.CATEGORIES,
@@ -60,6 +51,15 @@ ML_MODELS = [
         "target-dir": "places365",
         "sha256": "27792ffcd1f6a4de7abebdea046dda0916f9cd12eba7bed7b5f51f120f91f0d8",
     },
+    # {
+    #     "id": 3,
+    #     "name": "im2txt",
+    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "im2txt",
+    #     "sha256": "980670c0365c0e32b5fecfc0907bfee4742bcd6a40e0d6ac5692c69bbd49ccc4",
+    # },
     {
         "id": 4,
         "name": "resnet18",
