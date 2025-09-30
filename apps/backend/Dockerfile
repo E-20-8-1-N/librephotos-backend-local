@@ -12,7 +12,7 @@ WORKDIR /code
 # ARG GIT_USERNAME=x-access-token
 # RUN --mount=type=secret,id=github_pat \
 #     git clone https://${GIT_USERNAME}:$(cat /run/secrets/github_pat)@github.com/Wiheim/librephotos_test.git .
-RUN git clone https://github.com/E-20-8-1-N/librephotos-backend-local.git .
+RUN git clone --branch develop --single-branch https://github.com/E-20-8-1-N/librephotos-backend-local.git .
 RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
 
 # Install necessary packages
