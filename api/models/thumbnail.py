@@ -127,18 +127,19 @@ class Thumbnail(models.Model):
             return
         try:
             # Resize image to speed up processing
-            img = Image.open(self.square_thumbnail_small.path)
-            img.thumbnail((100, 100))
+            with Image.open(self.square_thumbnail_small.path) as img:
+                # img = Image.open(self.square_thumbnail_small.path)
+                img.thumbnail((100, 100))
 
-            # Reduce colors (uses k-means internally)
-            paletted = img.convert("P", palette=Image.ADAPTIVE, colors=palette_size)
+                # Reduce colors (uses k-means internally)
+                paletted = img.convert("P", palette=Image.ADAPTIVE, colors=palette_size)
 
-            # Find the color that occurs most often
-            palette = paletted.getpalette()
-            color_counts = sorted(paletted.getcolors(), reverse=True)
-            palette_index = color_counts[0][1]
-            dominant_color = palette[palette_index * 3 : palette_index * 3 + 3]
-            self.dominant_color = dominant_color
-            self.save()
+                # Find the color that occurs most often
+                palette = paletted.getpalette()
+                color_counts = sorted(paletted.getcolors(), reverse=True)
+                palette_index = color_counts[0][1]
+                dominant_color = palette[palette_index * 3 : palette_index * 3 + 3]
+                self.dominant_color = dominant_color
+                self.save()
         except Exception:
             logger.info(f"Cannot calculate dominant color {self} object")

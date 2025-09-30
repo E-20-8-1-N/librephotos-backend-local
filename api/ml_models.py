@@ -24,14 +24,14 @@ class MlTypes:
 
 
 ML_MODELS = [
-    {
-        "id": 1,
-        "name": "im2txt",
-        "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
-        "type": MlTypes.CAPTIONING,
-        "unpack-command": "tar -zxC",
-        "target-dir": "im2txt",
-    },
+    # {
+    #     "id": 1,
+    #     "name": "im2txt",
+    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "im2txt",
+    # },
     {
         "id": 2,
         "name": "clip-embeddings",
@@ -48,45 +48,45 @@ ML_MODELS = [
         "unpack-command": "tar -zxC",
         "target-dir": "places365",
     },
-    {
-        "id": 4,
-        "name": "resnet18",
-        "url": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
-        "type": MlTypes.CATEGORIES,
-        "unpack-command": None,
-        "target-dir": "resnet18-5c106cde.pth",
-    },
-    {
-        "id": 6,
-        "name": "blip_base_capfilt_large",
-        "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/blip_large.tar.gz?download=true",
-        "type": MlTypes.CAPTIONING,
-        "unpack-command": "tar -zxC",
-        "target-dir": "blip",
-    },
-    {
-        "id": 8,
-        "name": "mistral-7b-instruct-v0.2.Q5_K_M",
-        "url": "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q5_K_M.gguf?download=true",
-        "type": MlTypes.LLM,
-        "unpack-command": None,
-        "target-dir": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
-    },
-    {
-        # Moondream 2 GGUF model for llama-cpp-python multimodal support
-        "id": 9,
-        "name": "moondream",
-        "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-text-model-f16.gguf?download=true",
-        "type": MlTypes.MOONDREAM,
-        "unpack-command": None,
-        "target-dir": "moondream2-text-model-f16.gguf",
-        "additional_files": [
-            {
-                "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-mmproj-f16.gguf?download=true",
-                "target": "moondream2-mmproj-f16.gguf",
-            }
-        ],
-    },
+    # {
+    #     "id": 4,
+    #     "name": "resnet18",
+    #     "url": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
+    #     "type": MlTypes.CATEGORIES,
+    #     "unpack-command": None,
+    #     "target-dir": "resnet18-5c106cde.pth",
+    # },
+    # {
+    #     "id": 6,
+    #     "name": "blip_base_capfilt_large",
+    #     "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/blip_large.tar.gz?download=true",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "blip",
+    # },
+    # {
+    #     "id": 8,
+    #     "name": "mistral-7b-instruct-v0.2.Q5_K_M",
+    #     "url": "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q5_K_M.gguf?download=true",
+    #     "type": MlTypes.LLM,
+    #     "unpack-command": None,
+    #     "target-dir": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
+    # },
+    # {
+    #     # Moondream 2 GGUF model for llama-cpp-python multimodal support
+    #     "id": 9,
+    #     "name": "moondream",
+    #     "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-text-model-f16.gguf?download=true",
+    #     "type": MlTypes.MOONDREAM,
+    #     "unpack-command": None,
+    #     "target-dir": "moondream2-text-model-f16.gguf",
+    #     "additional_files": [
+    #         {
+    #             "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-mmproj-f16.gguf?download=true",
+    #             "target": "moondream2-mmproj-f16.gguf",
+    #         }
+    #     ],
+    # },
 ]
 
 

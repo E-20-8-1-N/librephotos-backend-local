@@ -136,9 +136,9 @@ class Places365:
             # load the test image
             # img_url = 'http://places2.csail.mit.edu/imgs/3.jpg'
             # os.system('wget %s -q -O test.jpg' % img_url)
-            img = Image.open(img_path)
+            with Image.open(img_path) as img:
             # Normalize the image for processing
-            input_img = V(tf(img).unsqueeze(0))
+                input_img = V(tf(img).unsqueeze(0))
 
             # forward pass
             logit = self.model.forward(input_img)
