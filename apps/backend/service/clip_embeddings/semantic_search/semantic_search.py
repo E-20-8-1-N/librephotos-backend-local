@@ -29,7 +29,9 @@ class SemanticSearch:
         imgs = []
         for path in paths:
             try:
-                imgs.append(PIL.Image.open(path))
+                image = PIL.Image.open(path)
+                image.load()
+                imgs.append(image)
             except PIL.UnidentifiedImageError:
                 print(f"Error loading image: {path}")
         return imgs
@@ -62,7 +64,10 @@ class SemanticSearch:
             return self.single_embedding(imgs_emb, on_cuda)
         except Exception as e:
             print(f"Error in calculating clip embeddings: {e}")
-            raise e
+            raise
+        finally:
+            for image in imgs:
+                image.close()
 
     def calculate_query_embeddings(self, query, model):
         if not self.model_is_loaded:
