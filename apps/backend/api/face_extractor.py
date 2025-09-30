@@ -1,4 +1,3 @@
-import numpy as np
 import PIL
 
 from api.face_recognition import get_face_locations
@@ -55,21 +54,23 @@ def extract_from_exif(image_path, big_thumbnail_image_path):
         return
     logger.debug(f"Extracted region_info for {image_path}")
     logger.debug(f"region_info: {region_info}")
+    with PIL.Image.open(big_thumbnail_image_path) as image:
+        image_width, image_height = image.size
+
     face_locations = []
     for region in region_info["RegionList"]:
         if region.get("Type") != "Face":
             continue
 
         area = region.get("Area")
-        big_thumbnail_image = np.array(PIL.Image.open(big_thumbnail_image_path))
         if not has_normalized_area(area, region.get("AppliedToDimensions")):
             continue
 
         box = to_face_box(
             area,
             orientation,
-            big_thumbnail_image.shape[1],
-            big_thumbnail_image.shape[0],
+            image_width,
+            image_height,
         )
         if box is None:
             logger.info(

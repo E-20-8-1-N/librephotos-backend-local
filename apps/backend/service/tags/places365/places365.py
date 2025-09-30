@@ -124,9 +124,9 @@ class Places365:
         # img_url = 'http://places2.csail.mit.edu/imgs/3.jpg'
         # os.system('wget %s -q -O test.jpg' % img_url)
         tf = self.returnTF()  # image transformer
-        img = Image.open(img_path)
-        # Normalize the image for processing
-        input_img = V(tf(img).unsqueeze(0))
+        with Image.open(img_path) as img:
+            # Normalize the image for processing
+            input_img = V(tf(img).unsqueeze(0))
 
         logit = self.model.forward(input_img)
         h_x = F.softmax(logit, 1).data.squeeze()
