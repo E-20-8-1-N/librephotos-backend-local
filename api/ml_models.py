@@ -24,16 +24,8 @@ class MlTypes:
 
 
 ML_MODELS = [
-    # {
-    #     "id": 1,
-    #     "name": "im2txt",
-    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
-    #     "type": MlTypes.CAPTIONING,
-    #     "unpack-command": "tar -zxC",
-    #     "target-dir": "im2txt",
-    # },
     {
-        "id": 2,
+        "id": 1,
         "name": "clip-embeddings",
         "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/clip-embeddings.tar.gz",
         "type": MlTypes.CLIP,
@@ -41,13 +33,21 @@ ML_MODELS = [
         "target-dir": "clip-embeddings",
     },
     {
-        "id": 3,
+        "id": 2,
         "name": "places365",
         "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/places365.tar.gz",
         "type": MlTypes.CATEGORIES,
         "unpack-command": "tar -zxC",
         "target-dir": "places365",
     },
+    # {
+    #     "id": 3,
+    #     "name": "im2txt",
+    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "im2txt",
+    # },
     # {
     #     "id": 4,
     #     "name": "resnet18",
