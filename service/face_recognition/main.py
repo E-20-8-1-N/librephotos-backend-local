@@ -29,11 +29,12 @@ def create_face_encodings():
     except Exception:
         return "", 400
 
-    image = np.array(PIL.Image.open(source))
-    face_encodings = face_recognition.face_encodings(
-        image,
-        known_face_locations=face_locations,
-    )
+    with PIL.Image.open(source) as img:
+        image = np.array(img)
+        face_encodings = face_recognition.face_encodings(
+            image,
+            known_face_locations=face_locations,
+        )
     # Convert NumPy arrays to Python lists
     face_encodings_list = [enc.tolist() for enc in face_encodings]
     # Log number of face encodings
@@ -54,8 +55,9 @@ def create_face_locations():
     except Exception:
         return "", 400
 
-    image = np.array(PIL.Image.open(source))
-    face_locations = face_recognition.face_locations(image, model=model)
+    with PIL.Image.open(source) as img:
+        image = np.array(img)
+        face_locations = face_recognition.face_locations(image, model=model)
     log(f"created face_location={face_locations}")
     return {"face_locations": face_locations}, 201
 
