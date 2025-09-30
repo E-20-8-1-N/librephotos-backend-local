@@ -23,14 +23,14 @@ class MlTypes:
 
 
 ML_MODELS = [
-    {
-        "id": 1,
-        "name": "im2txt",
-        "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
-        "type": MlTypes.CAPTIONING,
-        "unpack-command": "tar -zxC",
-        "target-dir": "im2txt",
-    },
+    # {
+    #     "id": 1,
+    #     "name": "im2txt",
+    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "im2txt",
+    # },
     {
         "id": 2,
         "name": "clip-embeddings",
@@ -63,6 +63,14 @@ ML_MODELS = [
         "unpack-command": "zip",
         "target-dir": "face_recognition/models/buffalo_sc",
     },
+    # {
+    #     "id": 6,
+    #     "name": "blip_base_capfilt_large",
+    #     "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/blip_large.tar.gz?download=true",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "blip",
+    # },
     {
         "id": 7,
         "name": "buffalo_s",
@@ -71,14 +79,29 @@ ML_MODELS = [
         "unpack-command": "zip",
         "target-dir": "face_recognition/models/buffalo_s",
     },
-    {
-        "id": 6,
-        "name": "blip_base_capfilt_large",
-        "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/blip_large.tar.gz?download=true",
-        "type": MlTypes.CAPTIONING,
-        "unpack-command": "tar -zxC",
-        "target-dir": "blip",
-    },
+    # {
+    #     "id": 8,
+    #     "name": "mistral-7b-instruct-v0.2.Q5_K_M",
+    #     "url": "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q5_K_M.gguf?download=true",
+    #     "type": MlTypes.LLM,
+    #     "unpack-command": None,
+    #     "target-dir": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
+    # },
+    # {
+    #     # Moondream 2 GGUF model for llama-cpp-python multimodal support
+    #     "id": 9,
+    #     "name": "moondream",
+    #     "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-text-model-f16.gguf?download=true",
+    #     "type": MlTypes.MOONDREAM,
+    #     "unpack-command": None,
+    #     "target-dir": "moondream2-text-model-f16.gguf",
+    #     "additional_files": [
+    #         {
+    #             "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-mmproj-f16.gguf?download=true",
+    #             "target": "moondream2-mmproj-f16.gguf",
+    #         }
+    #     ],
+    # },
     {
         "id": 10,
         "name": "buffalo_m",
@@ -86,14 +109,6 @@ ML_MODELS = [
         "type": MlTypes.FACE_RECOGNITION,
         "unpack-command": "zip",
         "target-dir": "face_recognition/models/buffalo_m",
-    },
-    {
-        "id": 8,
-        "name": "mistral-7b-instruct-v0.2.Q5_K_M",
-        "url": "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q5_K_M.gguf?download=true",
-        "type": MlTypes.LLM,
-        "unpack-command": None,
-        "target-dir": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
     },
     {
         "id": 11,
@@ -128,21 +143,6 @@ ML_MODELS = [
         "type": MlTypes.FACE_RECOGNITION,
         "unpack-command": "zip",
         "target-dir": "face_recognition/models/antelopev2",
-    },
-    {
-        # Moondream 2 GGUF model for llama-cpp-python multimodal support
-        "id": 9,
-        "name": "moondream",
-        "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-text-model-f16.gguf?download=true",
-        "type": MlTypes.MOONDREAM,
-        "unpack-command": None,
-        "target-dir": "moondream2-text-model-f16.gguf",
-        "additional_files": [
-            {
-                "url": "https://huggingface.co/moondream/moondream-2b-2025-04-14-4bit/resolve/main/moondream2-mmproj-f16.gguf?download=true",
-                "target": "moondream2-mmproj-f16.gguf",
-            }
-        ],
     },
 ]
 
