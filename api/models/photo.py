@@ -407,9 +407,8 @@ class Photo(models.Model):
             api.models.cluster.get_unknown_cluster(user=self.owner)
         )
         try:
-            big_thumbnail_image = np.array(
-                PIL.Image.open(self.thumbnail.thumbnail_big.path)
-            )
+            with PIL.Image.open(self.thumbnail.thumbnail_big.path) as img:
+                big_thumbnail_image = np.array(img)
 
             face_locations = face_extractor.extract(
                 self.main_file.path, self.thumbnail.thumbnail_big.path, self.owner
