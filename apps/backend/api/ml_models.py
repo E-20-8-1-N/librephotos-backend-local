@@ -33,15 +33,15 @@ class ModelChecksumError(Exception):
 
 
 ML_MODELS = [
-    {
-        "id": 1,
-        "name": "im2txt",
-        "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
-        "type": MlTypes.CAPTIONING,
-        "unpack-command": "tar -zxC",
-        "target-dir": "im2txt",
-        "sha256": "980670c0365c0e32b5fecfc0907bfee4742bcd6a40e0d6ac5692c69bbd49ccc4",
-    },
+    # {
+    #     "id": 1,
+    #     "name": "im2txt",
+    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/im2txt.tar.gz",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "im2txt",
+    #     "sha256": "980670c0365c0e32b5fecfc0907bfee4742bcd6a40e0d6ac5692c69bbd49ccc4",
+    # },
     {
         "id": 2,
         "name": "clip-embeddings",
@@ -82,6 +82,15 @@ ML_MODELS = [
         "target-dir": "face_recognition/models/buffalo_sc",
         "sha256": "57d31b56b6ffa911c8a73cfc1707c73cab76efe7f13b675a05223bf42de47c72",
     },
+    # {
+    #     "id": 6,
+    #     "name": "blip_base_capfilt_large",
+    #     "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/blip_large.tar.gz?download=true",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "blip",
+    #     "sha256": "7c730d83bfdf4def7e9cca070e88b89192e61b8b1e7b64179b182e03922179f8",
+    # },
     {
         "id": 7,
         "name": "buffalo_s",
@@ -92,15 +101,6 @@ ML_MODELS = [
         "sha256": "d85a87f503f691807cd8bb97128bdf7a0660326cd9cd02657127fa978bab8b5e",
     },
     {
-        "id": 6,
-        "name": "blip_base_capfilt_large",
-        "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/blip_large.tar.gz?download=true",
-        "type": MlTypes.CAPTIONING,
-        "unpack-command": "tar -zxC",
-        "target-dir": "blip",
-        "sha256": "7c730d83bfdf4def7e9cca070e88b89192e61b8b1e7b64179b182e03922179f8",
-    },
-    {
         "id": 10,
         "name": "buffalo_m",
         "url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_m.zip",
@@ -109,15 +109,15 @@ ML_MODELS = [
         "target-dir": "face_recognition/models/buffalo_m",
         "sha256": "d98264bd8f2dc75cbc2ddce2a14e636e02bb857b3051c234b737bf3b614edca9",
     },
-    {
-        "id": 8,
-        "name": "mistral-7b-instruct-v0.2.Q5_K_M",
-        "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/mistral/mistral-7b-instruct-v0.2.Q5_K_M.gguf?download=true",
-        "type": MlTypes.LLM,
-        "unpack-command": None,
-        "target-dir": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
-        "sha256": "b85cdd596ddd76f3194047b9108a73c74d77ba04bef49255a50fc0cfbda83d32",
-    },
+    # {
+    #     "id": 8,
+    #     "name": "mistral-7b-instruct-v0.2.Q5_K_M",
+    #     "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/mistral/mistral-7b-instruct-v0.2.Q5_K_M.gguf?download=true",
+    #     "type": MlTypes.LLM,
+    #     "unpack-command": None,
+    #     "target-dir": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
+    #     "sha256": "b85cdd596ddd76f3194047b9108a73c74d77ba04bef49255a50fc0cfbda83d32",
+    # },
     {
         "id": 11,
         "name": "siglip2",
@@ -184,23 +184,23 @@ ML_MODELS = [
         "target-dir": "ocr/ppocrv6_medium",
         "sha256": "21232b79847cd56d5cae801d3364f95e508b40bb0ce159f31687e63c63959a0b",
     },
-    {
-        # Moondream 2 GGUF model for llama-cpp-python multimodal support
-        "id": 9,
-        "name": "moondream",
-        "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/moondream/moondream2-text-model-f16.gguf?download=true",
-        "type": MlTypes.MOONDREAM,
-        "unpack-command": None,
-        "target-dir": "moondream2-text-model-f16.gguf",
-        "sha256": "4e17e9107fb8781629b3c8ce177de57ffeae90fe14adcf7b99f0eef025889696",
-        "additional_files": [
-            {
-                "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/moondream/moondream2-mmproj-f16.gguf?download=true",
-                "target": "moondream2-mmproj-f16.gguf",
-                "sha256": "4cc1cb3660d87ff56432ebeb7884ad35d67c48c7b9f6b2856f305e39c38eed8f",
-            }
-        ],
-    },
+    # {
+    #     # Moondream 2 GGUF model for llama-cpp-python multimodal support
+    #     "id": 9,
+    #     "name": "moondream",
+    #     "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/moondream/moondream2-text-model-f16.gguf?download=true",
+    #     "type": MlTypes.MOONDREAM,
+    #     "unpack-command": None,
+    #     "target-dir": "moondream2-text-model-f16.gguf",
+    #     "sha256": "4e17e9107fb8781629b3c8ce177de57ffeae90fe14adcf7b99f0eef025889696",
+    #     "additional_files": [
+    #         {
+    #             "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/moondream/moondream2-mmproj-f16.gguf?download=true",
+    #             "target": "moondream2-mmproj-f16.gguf",
+    #             "sha256": "4cc1cb3660d87ff56432ebeb7884ad35d67c48c7b9f6b2856f305e39c38eed8f",
+    #         }
+    #     ],
+    # },
 ]
 
 

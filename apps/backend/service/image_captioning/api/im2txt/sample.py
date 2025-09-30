@@ -45,14 +45,14 @@ class Im2txt:
         self.model = None
 
     def load_image(self, image_path, transform=None):
-        image = Image.open(image_path)
-        # Check if the image has 3 channels (RGB)
-        if image.mode != "RGB":
-            # Handle grayscale or other modes here (e.g., convert to RGB)
-            image = image.convert("RGB")
+        with Image.open(image_path) as image:
+            # Check if the image has 3 channels (RGB)
+            if image.mode != "RGB":
+                # Handle grayscale or other modes here (e.g., convert to RGB)
+                image = image.convert("RGB")
 
-        if transform is not None:
-            image = transform(image).unsqueeze(0)
+            if transform is not None:
+                image = transform(image).unsqueeze(0)
 
         return image
 
