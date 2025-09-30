@@ -30,7 +30,8 @@ def extract_from_exif(image_path, big_thumbnail_image_path):
 
         area = region.get("Area")
         applied_to_dimensions = region.get("AppliedToDimensions")
-        big_thumbnail_image = np.array(PIL.Image.open(big_thumbnail_image_path))
+        with PIL.Image.open(big_thumbnail_image_path) as img:
+            big_thumbnail_image = np.array(img)
         if (area and area.get("Unit") == "normalized") or (
             applied_to_dimensions and applied_to_dimensions.get("Unit") == "pixel"
         ):

@@ -36,9 +36,10 @@ class CocoDataset(data.Dataset):
         img_id = coco.anns[ann_id]["image_id"]
         path = coco.loadImgs(img_id)[0]["file_name"]
 
-        image = Image.open(os.path.join(self.root, path)).convert("RGB")
-        if self.transform is not None:
-            image = self.transform(image)
+        with Image.open(os.path.join(self.root, path)) as img:
+            image = img.convert("RGB")
+            if self.transform is not None:
+                image = self.transform(image)
 
         # Convert caption (string) to word ids.
 
