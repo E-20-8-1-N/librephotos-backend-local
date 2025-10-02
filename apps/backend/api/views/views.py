@@ -1094,12 +1094,6 @@ class UnifiedMediaAccessView(APIView):
             )
             if album is None:
                 return HttpResponse(status=404)
-            # try:
-            #     photo = album.photos.only(
-            #         "image_hash", "video", "main_file", "thumbnail"
-            #     ).get(image_hash=image_hash)
-            # except Photo.DoesNotExist:
-            #     return HttpResponse(status=404)
             photo = album.photos.only(
                 "image_hash", "video", "main_file", "thumbnail"
             ).filter(image_hash=image_hash).first()
