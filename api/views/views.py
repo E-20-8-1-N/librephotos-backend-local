@@ -3,6 +3,8 @@ import subprocess
 import uuid
 from urllib.parse import quote
 
+import re
+import mimetypes
 import jsonschema
 import magic
 from constance import config as site_config
@@ -27,6 +29,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView, exception_handler
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.all_tasks import create_download_job, delete_zip_file
 from api.api_util import get_search_term_examples
@@ -541,9 +544,111 @@ class UnifiedMediaAccessView(APIView):
     """
     Unified media access endpoint supporting both proxy and no-proxy setups,
     and handling public album media access.
+
+    Enhancements (no-proxy mode):
+      - Supports Authorization: Bearer <token> if cookie 'jwt' missing.
+      - Adds HTTP Range / Partial Content streaming for videos (and mp4 thumbnails).
+      - Adds Accept-Ranges for iOS AVPlayer compatibility.
     """
 
     permission_classes = (AllowAny,)
+
+    # ------------- AUTH HELPERS -------------
+    def _extract_user_from_headers(self, request):
+        """
+        Attempt to authenticate via Authorization header (Bearer) if no cookie.
+        Returns (user or None).
+        """
+        if request.user and request.user.is_authenticated:
+            return request.user
+
+        # Cookie already handled downstream; only try header here
+        auth = request.META.get("HTTP_AUTHORIZATION")
+        if not auth:
+            return None
+        if not auth.lower().startswith("bearer "):
+            return None
+        raw = auth.split(" ", 1)[1].strip()
+        jwt_auth = JWTAuthentication()
+        try:
+            validated = jwt_auth.get_validated_token(raw)
+            return jwt_auth.get_user(validated)
+        except Exception:
+            return None
+
+    def _get_access_token_payload(self, jwt_str):
+        try:
+            token = AccessToken(jwt_str)
+            return token
+        except TokenError:
+            return None
+
+    def _get_user_from_cookie_or_header(self, request):
+        """
+        Return a user object if either cookie or Authorization header supplies a valid token.
+        """
+        # Try cookie
+        jwt_cookie = request.COOKIES.get("jwt")
+        if jwt_cookie:
+            payload = self._get_access_token_payload(jwt_cookie)
+            if payload:
+                user = User.objects.filter(id=payload.get("user_id")).only("id", "transcode_videos").first()
+                if user:
+                    return user
+
+        # Try Authorization header
+        user = self._extract_user_from_headers(request)
+        return user
+
+    # ------------- RANGE / STREAM HELPERS -------------
+    def _range_stream_response(self, file_path, content_type=None):
+        """
+        Produce a StreamingHttpResponse supporting HTTP Range requests.
+        """
+        if not os.path.exists(file_path):
+            return HttpResponse(status=404)
+
+        file_size = os.path.getsize(file_path)
+        content_type = content_type or mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        range_header = self.request.META.get("HTTP_RANGE", "")
+        range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+
+        def stream_chunk(start, end, chunk_size=8192):
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk = f.read(min(chunk_size, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        if range_match:
+            start = int(range_match.group(1))
+            end_str = range_match.group(2)
+            end = int(end_str) if end_str else file_size - 1
+            if end >= file_size:
+                end = file_size - 1
+            if start > end or start >= file_size:
+                # Unsatisfiable range
+                resp = HttpResponse(status=416)
+                resp["Content-Range"] = f"bytes */{file_size}"
+                return resp
+            length = end - start + 1
+            resp = StreamingHttpResponse(stream_chunk(start, end), status=206, content_type=content_type)
+            resp["Content-Length"] = str(length)
+            resp["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+        else:
+            # Full content (streaming for large file to avoid memory spike)
+            resp = StreamingHttpResponse(stream_chunk(0, file_size - 1), status=200, content_type=content_type)
+            resp["Content-Length"] = str(file_size)
+
+        resp["Accept-Ranges"] = "bytes"
+        resp["Cache-Control"] = "private, max-age=3600"
+        filename = os.path.basename(file_path)
+        resp["Content-Disposition"] = f'inline; filename="{filename}"'
+        return resp
 
     def _should_use_proxy(self):
         return not getattr(settings, "SERVE_FRONTEND", False)
@@ -552,7 +657,14 @@ class UnifiedMediaAccessView(APIView):
         path = path.lstrip("/")
         return f"/protected_media/{path}/{fname}"
 
-    def _serve_file_direct(self, file_path, content_type=None):
+    def _serve_file_direct(self, file_path, content_type=None, force_range=False):
+        """
+        Serve a file directly.
+        If force_range=True (video), we stream with range support.
+        """
+        if force_range:
+            return self._range_stream_response(file_path, content_type)
+
         if not os.path.exists(file_path):
             return HttpResponse(status=404)
         try:
@@ -634,6 +746,10 @@ class UnifiedMediaAccessView(APIView):
         return response
 
     def _generate_response_direct(self, photo, path, fname, transcode_videos):
+        """
+        Direct (no proxy) path; add Range streaming for videos or mp4 thumbnails.
+        """
+        # Thumbnails (may include mp4 surrogate)
         if "thumbnail" in path:
             file_path = os.path.join(settings.MEDIA_ROOT, path, fname)
             if not os.path.exists(file_path):
@@ -644,7 +760,7 @@ class UnifiedMediaAccessView(APIView):
                 if not fname.endswith(".mp4"):
                     mp4 = os.path.join(settings.MEDIA_ROOT, path, fname + ".mp4")
                     if os.path.exists(mp4):
-                        return self._serve_file_direct(mp4, "video/mp4")
+                        return self._serve_file_direct(mp4, "video/mp4", force_range=True)
             if hasattr(photo, "thumbnail"):
                 ext = os.path.splitext(photo.thumbnail.square_thumbnail.path)[1]
                 if "jpg" in ext:
@@ -657,9 +773,19 @@ class UnifiedMediaAccessView(APIView):
             file_path = os.path.join(settings.MEDIA_ROOT, path, fname)
             return self._serve_file_direct(file_path, "image/jpg")
 
+        # VIDEO
         if photo.video:
-            return self._serve_file_direct(photo.main_file.path)
+            if transcode_videos:
+                # Keep existing transcoding (live pipe) — does not support seeking well
+                # Optionally you could implement fragmented MP4 with range, but keep as-is.
+                return StreamingHttpResponse(
+                    gen(VideoTranscoder(photo.main_file.path)),
+                    content_type="video/mp4",
+                )
+            # Serve file with Range
+            return self._serve_file_direct(photo.main_file.path, force_range=True)
 
+        # IMAGE
         file_path = os.path.join(settings.MEDIA_ROOT, path, fname)
         return self._serve_file_direct(file_path, "image/jpg")
 
@@ -669,31 +795,41 @@ class UnifiedMediaAccessView(APIView):
         )
 
     def get(self, request, path, fname, album_id=None, format=None):
+        """
+        - Auth fallback to Authorization header
+        - Range streaming in direct (no proxy) video paths
+        """
         use_proxy = self._should_use_proxy()
+
+        # Helper: auth user for protected (non-public) cases
+        authed_user = None
 
         # ZIP files
         if path.lower() == "zip":
             jwt = request.COOKIES.get("jwt")
-            if jwt is not None:
-                try:
-                    token = AccessToken(jwt)
-                except TokenError:
+            # if jwt is not None:
+            #     try:
+            #         token = AccessToken(jwt)
+            #     except TokenError:
+            #         return HttpResponseForbidden()
+            if not jwt:
+                # Try Authorization header
+                authed_user = self._extract_user_from_headers(request)
+                if not authed_user:
                     return HttpResponseForbidden()
             else:
-                return HttpResponseForbidden()
+                token = self._get_access_token_payload(jwt)
+                if not token:
+                    return HttpResponseForbidden()
             try:
-                filename = fname + str(token["user_id"]) + ".zip"
+                filename = fname + (str(token["user_id"]) if jwt else str(authed_user.id)) + ".zip"
                 if use_proxy:
                     response = HttpResponse()
                     response["Content-Type"] = "application/x-zip-compressed"
-                    response["X-Accel-Redirect"] = self._protected_media_url(
-                        path, filename
-                    )
+                    response["X-Accel-Redirect"] = self._protected_media_url(path, filename)
                     return response
                 file_path = os.path.join(settings.MEDIA_ROOT, path, filename)
-                return self._serve_file_direct(
-                    file_path, "application/x-zip-compressed"
-                )
+                return self._serve_file_direct(file_path, "application/x-zip-compressed")
             except Exception:
                 return HttpResponseForbidden()
 
@@ -706,6 +842,10 @@ class UnifiedMediaAccessView(APIView):
                 except TokenError:
                     return HttpResponseForbidden()
             else:
+                return HttpResponseForbidden()
+            
+            authed_user = self._get_user_from_cookie_or_header(request)
+            if not authed_user:
                 return HttpResponseForbidden()
             try:
                 _ = User.objects.filter(id=token["user_id"]).only("id").first()
@@ -727,18 +867,27 @@ class UnifiedMediaAccessView(APIView):
             query = Q(public=True)
             if request.user.is_authenticated:
                 query = Q(owner=request.user)
-            if jwt is not None:  # pragma: no cover
-                try:
-                    token = AccessToken(jwt)
+            # if jwt is not None:  # pragma: no cover
+            #     try:
+            #         token = AccessToken(jwt)
+            #         user = User.objects.filter(id=token["user_id"]).only("id").first()
+            #         query = Q(owner=user)
+            #     except TokenError:
+            #         pass
+            # try:
+            #     photo = Photo.objects.filter(query, image_hash=fname).first()
+            #     if not photo or photo.main_file.embedded_media.count() < 1:
+            #         raise Photo.DoesNotExist()
+            # except Photo.DoesNotExist:
+            #     return HttpResponse(status=404)
+            if jwt is not None:
+                token = self._get_access_token_payload(jwt)
+                if token:
                     user = User.objects.filter(id=token["user_id"]).only("id").first()
-                    query = Q(owner=user)
-                except TokenError:
-                    pass
-            try:
-                photo = Photo.objects.filter(query, image_hash=fname).first()
-                if not photo or photo.main_file.embedded_media.count() < 1:
-                    raise Photo.DoesNotExist()
-            except Photo.DoesNotExist:
+                    if user:
+                        query = Q(owner=user)
+            photo = Photo.objects.filter(query, image_hash=fname).first()
+            if not photo or photo.main_file.embedded_media.count() < 1:
                 return HttpResponse(status=404)
             if use_proxy:
                 response = HttpResponse()
@@ -762,11 +911,16 @@ class UnifiedMediaAccessView(APIView):
             )
             if album is None:
                 return HttpResponse(status=404)
-            try:
-                photo = album.photos.only(
-                    "image_hash", "video", "main_file", "thumbnail"
-                ).get(image_hash=image_hash)
-            except Photo.DoesNotExist:
+            # try:
+            #     photo = album.photos.only(
+            #         "image_hash", "video", "main_file", "thumbnail"
+            #     ).get(image_hash=image_hash)
+            # except Photo.DoesNotExist:
+            #     return HttpResponse(status=404)
+            photo = album.photos.only(
+                "image_hash", "video", "main_file", "thumbnail"
+            ).filter(image_hash=image_hash).first()
+            if not photo:
                 return HttpResponse(status=404)
 
             if "thumbnail" in path or "thumbnails" in path or "faces" in path:
@@ -795,9 +949,10 @@ class UnifiedMediaAccessView(APIView):
                 content_type = mime.from_file(photo.main_file.path)
             except Exception:
                 content_type = "application/octet-stream"
-            return self._serve_file_direct(
-                photo.main_file.path, content_type if photo.video else "image/webp"
-            )
+            # Range for video
+            if photo.video:
+                return self._serve_file_direct(photo.main_file.path, content_type, force_range=True)
+            return self._serve_file_direct(photo.main_file.path, content_type if photo.video else "image/webp")
 
         # Non-photos (thumbnails, faces, etc.)
         if path.lower() != "photos":
@@ -811,38 +966,52 @@ class UnifiedMediaAccessView(APIView):
                     return self._generate_response_proxy(photo, path, fname, False)
                 return self._generate_response_direct(photo, path, fname, False)
 
-            jwt = request.COOKIES.get("jwt")
-            if jwt is not None:
-                try:
-                    token = AccessToken(jwt)
-                except TokenError:
-                    return HttpResponseForbidden()
-            else:
-                return HttpResponseForbidden()
+            # jwt = request.COOKIES.get("jwt")
+            # if jwt is not None:
+            #     try:
+            #         token = AccessToken(jwt)
+            #     except TokenError:
+            #         return HttpResponseForbidden()
+            # else:
+            #     return HttpResponseForbidden()
 
-            user = (
-                User.objects.filter(id=token["user_id"])
-                .only("id", "transcode_videos")
-                .first()
-            )
-            if photo.owner == user or user in photo.shared_to.all():
+            # user = (
+            #     User.objects.filter(id=token["user_id"])
+            #     .only("id", "transcode_videos")
+            #     .first()
+            # )
+            # Need auth for private
+            authed_user = self._get_user_from_cookie_or_header(request)
+            if not authed_user:
+                return HttpResponseForbidden()
+            
+            # if photo.owner == user or user in photo.shared_to.all():
+            #     if use_proxy:
+            #         return self._generate_response_proxy(
+            #             photo, path, fname, user.transcode_videos
+            #         )
+            #     return self._generate_response_direct(
+            #         photo, path, fname, user.transcode_videos
+            #     )
+            # Ownership / sharing check
+            if photo.owner == authed_user or authed_user in photo.shared_to.all():
                 if use_proxy:
-                    return self._generate_response_proxy(
-                        photo, path, fname, user.transcode_videos
-                    )
-                return self._generate_response_direct(
-                    photo, path, fname, user.transcode_videos
-                )
+                    return self._generate_response_proxy(photo, path, fname, getattr(authed_user, "transcode_videos", False))
+                return self._generate_response_direct(photo, path, fname, getattr(authed_user, "transcode_videos", False))
             else:
                 for album in photo.albumuser_set.only("shared_to", "public"):
-                    if getattr(album, "public", False) or user in album.shared_to.all():
+                    # if getattr(album, "public", False) or user in album.shared_to.all():
+                    #     if use_proxy:
+                    #         return self._generate_response_proxy(
+                    #             photo, path, fname, user.transcode_videos
+                    #         )
+                    #     return self._generate_response_direct(
+                    #         photo, path, fname, user.transcode_videos
+                    #     )
+                    if getattr(album, "public", False) or authed_user in album.shared_to.all():
                         if use_proxy:
-                            return self._generate_response_proxy(
-                                photo, path, fname, user.transcode_videos
-                            )
-                        return self._generate_response_direct(
-                            photo, path, fname, user.transcode_videos
-                        )
+                            return self._generate_response_proxy(photo, path, fname, getattr(authed_user, "transcode_videos", False))
+                        return self._generate_response_direct(photo, path, fname, getattr(authed_user, "transcode_videos", False))
             return HttpResponse(status=404)
 
         # Original photos (path == photos)
