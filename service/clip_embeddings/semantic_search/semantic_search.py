@@ -33,14 +33,14 @@ class SemanticSearch:
         if type(img_paths) is list:
             for path in img_paths:
                 try:
-                    img = PIL.Image.open(path)
-                    imgs.append(img)
+                    with PIL.Image.open(path) as img:
+                        imgs.append(img)
                 except PIL.UnidentifiedImageError:
                     print(f"Error loading image: {path}")
         else:
             try:
-                img = PIL.Image.open(img_paths)
-                imgs.append(img)
+                with PIL.Image.open(img_paths) as img:
+                    imgs.append(img)
             except PIL.UnidentifiedImageError:
                 print(f"Error loading image: {img_paths}")
 
