@@ -807,11 +807,6 @@ class UnifiedMediaAccessView(APIView):
         # ZIP files
         if path.lower() == "zip":
             jwt = request.COOKIES.get("jwt")
-            # if jwt is not None:
-            #     try:
-            #         token = AccessToken(jwt)
-            #     except TokenError:
-            #         return HttpResponseForbidden()
             if not jwt:
                 # Try Authorization header
                 authed_user = self._extract_user_from_headers(request)
@@ -867,19 +862,6 @@ class UnifiedMediaAccessView(APIView):
             query = Q(public=True)
             if request.user.is_authenticated:
                 query = Q(owner=request.user)
-            # if jwt is not None:  # pragma: no cover
-            #     try:
-            #         token = AccessToken(jwt)
-            #         user = User.objects.filter(id=token["user_id"]).only("id").first()
-            #         query = Q(owner=user)
-            #     except TokenError:
-            #         pass
-            # try:
-            #     photo = Photo.objects.filter(query, image_hash=fname).first()
-            #     if not photo or photo.main_file.embedded_media.count() < 1:
-            #         raise Photo.DoesNotExist()
-            # except Photo.DoesNotExist:
-            #     return HttpResponse(status=404)
             if jwt is not None:
                 token = self._get_access_token_payload(jwt)
                 if token:
@@ -911,12 +893,6 @@ class UnifiedMediaAccessView(APIView):
             )
             if album is None:
                 return HttpResponse(status=404)
-            # try:
-            #     photo = album.photos.only(
-            #         "image_hash", "video", "main_file", "thumbnail"
-            #     ).get(image_hash=image_hash)
-            # except Photo.DoesNotExist:
-            #     return HttpResponse(status=404)
             photo = album.photos.only(
                 "image_hash", "video", "main_file", "thumbnail"
             ).filter(image_hash=image_hash).first()
@@ -966,33 +942,10 @@ class UnifiedMediaAccessView(APIView):
                     return self._generate_response_proxy(photo, path, fname, False)
                 return self._generate_response_direct(photo, path, fname, False)
 
-            # jwt = request.COOKIES.get("jwt")
-            # if jwt is not None:
-            #     try:
-            #         token = AccessToken(jwt)
-            #     except TokenError:
-            #         return HttpResponseForbidden()
-            # else:
-            #     return HttpResponseForbidden()
-
-            # user = (
-            #     User.objects.filter(id=token["user_id"])
-            #     .only("id", "transcode_videos")
-            #     .first()
-            # )
             # Need auth for private
             authed_user = self._get_user_from_cookie_or_header(request)
             if not authed_user:
                 return HttpResponseForbidden()
-            
-            # if photo.owner == user or user in photo.shared_to.all():
-            #     if use_proxy:
-            #         return self._generate_response_proxy(
-            #             photo, path, fname, user.transcode_videos
-            #         )
-            #     return self._generate_response_direct(
-            #         photo, path, fname, user.transcode_videos
-            #     )
             # Ownership / sharing check
             if photo.owner == authed_user or authed_user in photo.shared_to.all():
                 if use_proxy:
@@ -1000,14 +953,6 @@ class UnifiedMediaAccessView(APIView):
                 return self._generate_response_direct(photo, path, fname, getattr(authed_user, "transcode_videos", False))
             else:
                 for album in photo.albumuser_set.only("shared_to", "public"):
-                    # if getattr(album, "public", False) or user in album.shared_to.all():
-                    #     if use_proxy:
-                    #         return self._generate_response_proxy(
-                    #             photo, path, fname, user.transcode_videos
-                    #         )
-                    #     return self._generate_response_direct(
-                    #         photo, path, fname, user.transcode_videos
-                    #     )
                     if getattr(album, "public", False) or authed_user in album.shared_to.all():
                         if use_proxy:
                             return self._generate_response_proxy(photo, path, fname, getattr(authed_user, "transcode_videos", False))
