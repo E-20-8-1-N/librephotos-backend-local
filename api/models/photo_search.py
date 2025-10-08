@@ -103,6 +103,45 @@ class PhotoSearch(models.Model):
 
     def __str__(self):
         return f"Search data for {self.photo.image_hash}"
+    
+    def image_format_convertor(image_path, file_ext):
+        """
+        Convert image file to supporting type.
+        Returns a PIL.Image object or None if extraction fails.
+        """
+        
+        if file_ext in ['.gif', '.apng']:
+            try:
+                with Image.open(image_path) as img:
+                    img.seek(1)
+                    return img.convert("RGB")
+            except Exception as e:
+                util.logger.error(f"Failed to extract frame from {file_ext} image ({image_path}): {e}")
+                return None
+        elif file_ext in ['.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']:
+            try:
+                from pillow_heif import register_heif_opener
+
+                register_heif_opener()
+                with Image.open(image_path) as imgs:
+                    return imgs.convert("RGB")
+            except Exception as e:
+                util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
+                return None
+        elif file_ext in ['.svg']:
+            try:
+                import cairosvg
+                from io import BytesIO
+
+                png_data = cairosvg.svg2png(url=image_path)
+                with Image.open(BytesIO(png_data)) as svg_img:
+                    return svg_img.convert("RGB")
+            except Exception as e:
+                util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
+                return None
+        else:
+            util.logger.warning(f"Unsupported file: {image_path}")
+            return None
 
     def recreate_search_captions(self):
         """Recreate search captions from all caption sources.
