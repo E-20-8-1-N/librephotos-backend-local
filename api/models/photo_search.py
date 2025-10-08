@@ -117,27 +117,21 @@ class PhotoSearch(models.Model):
                         # Decode the caption
                         caption = caption_processor.decode(out[0], skip_special_tokens=True)
                         
-                        # Free memory
-                        del out
-                        gc.collect()
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         search_captions += caption + " "
+                        captions_json["im2txt"] = search_captions
+                        captions_json.save()
+                        
+                        # Free memory
+                        del out
+                        del caption_processor
+                        del caption_model
+                        caption_processor = None
+                        caption_model = None
+                        gc.collect()
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}")
                         return None
-                    # # Fallback to generating a caption if not present
-                    # try:
-                    #     from api.im2txt.sample import Im2txt
-
-                    #     im2txt_instance = Im2txt(blip=False)
-                    #     generated_caption = im2txt_instance.generate_caption(
-                    #         image_path=image_path, onnx=False
-                    #     )
-                    #     search_captions += generated_caption + " "
-                    # except Exception as e:
-                    #     util.logger.error(
-                    #         f"Error generating im2txt caption for {self.photo.image_hash}: {e}"
-                    #     )
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
