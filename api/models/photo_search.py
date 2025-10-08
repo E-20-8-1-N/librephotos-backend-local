@@ -119,15 +119,17 @@ class PhotoSearch(models.Model):
                         
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         search_captions += caption + " "
-                        captions_json["im2txt"] = search_captions
-                        captions_json.save()
-                        
+                        if not self.photo.caption_instance:
+                            self.photo.caption_instance = api.models.photo_caption.PhotoCaption(photo=self.photo)
+                        if not self.photo.caption_instance.captions_json:
+                            self.photo.caption_instance.captions_json = {}
+                        caption_data = self.photo.caption_instance.captions_json
+                        caption_data["im2txt"] = caption
+                        self.photo.caption_instance.captions_json = caption_data
+                        self.photo.caption_instance.save()
+
                         # Free memory
                         del out
-                        del caption_processor
-                        del caption_model
-                        caption_processor = None
-                        caption_model = None
                         gc.collect()
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}")
