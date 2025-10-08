@@ -119,10 +119,7 @@ class PhotoSearch(models.Model):
                         
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         search_captions += caption + " "
-                        if not self.photo.caption_instance:
-                            self.photo.caption_instance = api.models.photo_caption.PhotoCaption(photo=self.photo)
-                        if not self.photo.caption_instance.captions_json:
-                            self.photo.caption_instance.captions_json = {}
+                        
                         caption_data = self.photo.caption_instance.captions_json
                         caption_data["im2txt"] = caption
                         self.photo.caption_instance.captions_json = caption_data
