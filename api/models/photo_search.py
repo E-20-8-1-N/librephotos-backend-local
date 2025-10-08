@@ -3,6 +3,7 @@ from django.db import models
 import api.models
 from api import util
 
+from PIL import Image
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -24,6 +25,45 @@ class PhotoSearch(models.Model):
 
     def __str__(self):
         return f"Search data for {self.photo.image_hash}"
+    
+    def image_format_convertor(image_path, file_ext):
+        """
+        Convert image file to supporting type.
+        Returns a PIL.Image object or None if extraction fails.
+        """
+        
+        if file_ext in ['.gif', '.apng']:
+            try:
+                with Image.open(image_path) as img:
+                    img.seek(1)
+                    return img.convert("RGB")
+            except Exception as e:
+                util.logger.error(f"Failed to extract frame from {file_ext} image ({image_path}): {e}")
+                return None
+        elif file_ext in ['.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']:
+            try:
+                from pillow_heif import register_heif_opener
+
+                register_heif_opener()
+                with Image.open(image_path) as imgs:
+                    return imgs.convert("RGB")
+            except Exception as e:
+                util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
+                return None
+        elif file_ext in ['.svg']:
+            try:
+                import cairosvg
+                from io import BytesIO
+
+                png_data = cairosvg.svg2png(url=image_path)
+                with Image.open(BytesIO(png_data)) as svg_img:
+                    return svg_img.convert("RGB")
+            except Exception as e:
+                util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
+                return None
+        else:
+            util.logger.warning(f"Unsupported file: {image_path}")
+            return None
 
     def recreate_search_captions(self):
         """Recreate search captions from all caption sources"""
@@ -51,6 +91,53 @@ class PhotoSearch(models.Model):
                 im2txt_caption = captions_json.get("im2txt", "")
                 if im2txt_caption:
                     search_captions += im2txt_caption + " "
+                else:
+                    import gc
+                    from transformers import BlipProcessor, BlipForConditionalGeneration
+                    
+                    caption_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
+                    caption_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large")
+
+                    image_path = self.photo.thumbnail.thumbnail_big.path
+                    file_ext = image_path.lower().split('.')[-1]
+
+                    try:
+                        if file_ext in ['.gif', '.heic', '.svg', '.tiff', '.webp', '.apng', '.avif', '.ico', '.icns']:
+                            image = self.image_format_convertor(image_path, file_ext)
+                            # Process the image
+                            inputs = caption_processor(images=image, return_tensors="pt")
+                        else:
+                            with Image.open(image_path).convert("RGB") as imgs:
+                                inputs = caption_processor(images=imgs, return_tensors="pt")
+
+                        # Generate the caption
+                        pixel_values = inputs.pixel_values
+                        out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
+
+                        # Decode the caption
+                        caption = caption_processor.decode(out[0], skip_special_tokens=True)
+                        
+                        # Free memory
+                        del out
+                        gc.collect()
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
+                        search_captions += caption + " "
+                    except Exception as e:
+                        util.logger.error(f"Failed to generate caption for {image_path}: {e}")
+                        return None
+                    # # Fallback to generating a caption if not present
+                    # try:
+                    #     from api.im2txt.sample import Im2txt
+
+                    #     im2txt_instance = Im2txt(blip=False)
+                    #     generated_caption = im2txt_instance.generate_caption(
+                    #         image_path=image_path, onnx=False
+                    #     )
+                    #     search_captions += generated_caption + " "
+                    # except Exception as e:
+                    #     util.logger.error(
+                    #         f"Error generating im2txt caption for {self.photo.image_hash}: {e}"
+                    #     )
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
