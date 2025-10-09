@@ -83,7 +83,8 @@ def generate_image_caption(image_path: str, file_ext: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+IMG_TO_TEXT_MODEL_NAME = os.getenv("IMG_TO_TEXT_MODEL_NAME", "openbmb/MiniCPM-V-4_5")
+# BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
