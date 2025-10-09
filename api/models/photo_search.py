@@ -6,7 +6,8 @@ from api import util
 
 from PIL import Image
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+IMG_TO_TEXT_MODEL_NAME = os.getenv("IMG_TO_TEXT_MODEL_NAME", "openbmb/MiniCPM-V-4_5")
+# BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -96,40 +97,77 @@ class PhotoSearch(models.Model):
                     search_captions += im2txt_caption + " "
                 else:
                     import gc
-                    from transformers import BlipProcessor, BlipForConditionalGeneration
+                    import torch
+                    from transformers import AutoModel, AutoTokenizer
                     
-                    caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
-                    caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
+                    torch.manual_seed(100)
+                    model = AutoModel.from_pretrained(
+                        IMG_TO_TEXT_MODEL_NAME, # or openbmb/MiniCPM-o-2_6
+                        trust_remote_code=True,
+                        attn_implementation='sdpa', # sdpa or flash_attention_2, no eager
+                        torch_dtype=torch.bfloat16
+                    )
+                    model = model.eval().cuda()
+                    tokenizer = AutoTokenizer.from_pretrained(IMG_TO_TEXT_MODEL_NAME, trust_remote_code=True)
+                    enable_thinking=False # If `enable_thinking=True`, the thinking mode is enabled.
+                    stream=True # If `stream=True`, the answer is string
+
+                    # caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
+                    # caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = image_path.lower().split('.')[-1]
 
                     try:
+                        # if file_ext in ['.gif', '.heic', '.svg', '.tiff', '.webp', '.apng', '.avif', '.ico', '.icns']:
+                        #     image = self.image_format_convertor(image_path, file_ext)
+                        #     # Process the image
+                        #     inputs = caption_processor(images=image, return_tensors="pt")
+                        # else:
+                        #     with Image.open(image_path).convert("RGB") as imgs:
+                        #         inputs = caption_processor(images=imgs, return_tensors="pt")
+
+                        # # Generate the caption
+                        # pixel_values = inputs.pixel_values
+                        # out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
+
+                        # # Decode the caption
+                        # generated_caption = caption_processor.decode(out[0], skip_special_tokens=True)
+
                         if file_ext in ['.gif', '.heic', '.svg', '.tiff', '.webp', '.apng', '.avif', '.ico', '.icns']:
-                            image = self.image_format_convertor(image_path, file_ext)
-                            # Process the image
-                            inputs = caption_processor(images=image, return_tensors="pt")
+                            img = self.image_format_convertor(image_path, file_ext)
                         else:
-                            with Image.open(image_path).convert("RGB") as imgs:
-                                inputs = caption_processor(images=imgs, return_tensors="pt")
+                            try:
+                                with Image.open(image_path) as _img:
+                                    img = _img.convert("RGB")
+                            except Exception as e:
+                                util.logger.error(f"Failed to open image {image_path}: {e}")
+                                img = None
 
-                        # Generate the caption
-                        pixel_values = inputs.pixel_values
-                        out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
+                        if img is not None:
+                            question = "Describe the picture?"
+                            msgs = [{'role': 'user', 'content': [img, question]}]
 
-                        # Decode the caption
-                        caption = caption_processor.decode(out[0], skip_special_tokens=True)
-                        
-                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        search_captions += caption + " "
+                            answer = model.chat(
+                                msgs=msgs,
+                                tokenizer=tokenizer,
+                                enable_thinking=enable_thinking,
+                                stream=stream
+                            )
 
-                        caption_data = self.photo.caption_instance.captions_json
-                        caption_data["im2txt"] = caption
-                        self.photo.caption_instance.captions_json = caption_data
-                        self.photo.caption_instance.save()
+                            generated_caption = ""
+                            for new_text in answer:
+                                generated_caption += new_text
+                            
+                            util.logger.info(f"Generated caption for {image_path}: '{generated_caption}'")
+                            search_captions += generated_caption + " "
+
+                            caption_data = self.photo.caption_instance.captions_json
+                            caption_data["im2txt"] = generated_caption
+                            self.photo.caption_instance.captions_json = caption_data
+                            self.photo.caption_instance.save()
 
                         # Free memory
-                        del out
                         gc.collect()
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}")
