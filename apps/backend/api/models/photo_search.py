@@ -1,8 +1,11 @@
+import os
 from django.db import models
 
 from api import util
 
 from PIL import Image
+
+BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -106,8 +109,8 @@ class PhotoSearch(models.Model):
                     import gc
                     from transformers import BlipProcessor, BlipForConditionalGeneration
                     
-                    caption_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
-                    caption_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large")
+                    caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
+                    caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = image_path.lower().split('.')[-1]
@@ -130,7 +133,7 @@ class PhotoSearch(models.Model):
                         
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         search_captions += caption + " "
-                        
+
                         caption_data = self.photo.caption_instance.captions_json
                         caption_data["im2txt"] = caption
                         self.photo.caption_instance.captions_json = caption_data
