@@ -39,7 +39,7 @@ class PhotoSearch(models.Model):
             try:
                 with Image.open(image_path) as img:
                     img.seek(1)
-                    return img.convert("RGB")
+                    return img
             except Exception as e:
                 util.logger.error(f"Failed to extract frame from {file_ext} image ({image_path}): {e}")
                 return None
@@ -49,7 +49,7 @@ class PhotoSearch(models.Model):
 
                 register_heif_opener()
                 with Image.open(image_path) as imgs:
-                    return imgs.convert("RGB")
+                    return imgs
             except Exception as e:
                 util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
                 return None
@@ -60,7 +60,7 @@ class PhotoSearch(models.Model):
 
                 png_data = cairosvg.svg2png(url=image_path)
                 with Image.open(BytesIO(png_data)) as svg_img:
-                    return svg_img.convert("RGB")
+                    return svg_img
             except Exception as e:
                 util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
                 return None
@@ -112,14 +112,14 @@ class PhotoSearch(models.Model):
                             image = self.image_format_convertor(image_path, file_ext)
                             # Process the image
                             # inputs = caption_processor(images=image, return_tensors="pt")
-                            pixel_values = image_processor(image, return_tensors="pt").pixel_values
+                            inputs = image_processor(image, return_tensors="pt")
                         else:
-                            with Image.open(image_path).convert("RGB") as imgs:
+                            with Image.open(image_path) as imgs:
                                 # inputs = caption_processor(images=imgs, return_tensors="pt")
-                                pixel_values = image_processor(imgs, return_tensors="pt").pixel_values
+                                inputs = image_processor(imgs, return_tensors="pt")
 
                         # Generate the caption
-                        # pixel_values = inputs.pixel_values
+                        pixel_values = inputs.pixel_values
                         # out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
 
                         # Decode the caption
@@ -127,11 +127,11 @@ class PhotoSearch(models.Model):
 
                         # generate caption - suggested settings
                         generated_ids = model.generate(
-                            pixel_values,
+                            pixel_values=pixel_values,
                             temperature=0.7,
                             top_p=0.8,
                             top_k=50,
-                            num_beams=4 # you can use 1 for even faster inference with a small drop in quality
+                            num_beams=1 # you can use 1 for even faster inference with a small drop in quality
                         )
                         caption = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
                         
