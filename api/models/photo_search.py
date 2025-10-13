@@ -144,7 +144,7 @@ class PhotoSearch(models.Model):
                         self.photo.caption_instance.save()
 
                         # Free memory
-                        del out
+                        del generated_ids
                         gc.collect()
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}")
