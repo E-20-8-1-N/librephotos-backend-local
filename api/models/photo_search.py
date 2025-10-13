@@ -6,7 +6,7 @@ from api import util
 
 from PIL import Image
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-base")
+BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "cnmoro/tiny-image-captioning")
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -96,10 +96,13 @@ class PhotoSearch(models.Model):
                     search_captions += im2txt_caption + " "
                 else:
                     import gc
-                    from transformers import BlipProcessor, BlipForConditionalGeneration
+                    from transformers import AutoTokenizer, AutoImageProcessor, VisionEncoderDecoderModel #, BlipProcessor, BlipForConditionalGeneration
                     
-                    caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
-                    caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
+                    # caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
+                    # caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
+                    model = VisionEncoderDecoderModel.from_pretrained(BLIP_MODEL_NAME)
+                    tokenizer = AutoTokenizer.from_pretrained(BLIP_MODEL_NAME)
+                    image_processor = AutoImageProcessor.from_pretrained(BLIP_MODEL_NAME)
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = os.path.splitext(image_path)[1].lower()
@@ -108,17 +111,29 @@ class PhotoSearch(models.Model):
                         if file_ext in ['.gif', '.heic', '.svg', '.tiff', '.webp', '.apng', '.avif', '.ico', '.icns']:
                             image = self.image_format_convertor(image_path, file_ext)
                             # Process the image
-                            inputs = caption_processor(images=image, return_tensors="pt")
+                            # inputs = caption_processor(images=image, return_tensors="pt")
+                            pixel_values = image_processor(image, return_tensors="pt").pixel_values
                         else:
                             with Image.open(image_path).convert("RGB") as imgs:
-                                inputs = caption_processor(images=imgs, return_tensors="pt")
+                                # inputs = caption_processor(images=imgs, return_tensors="pt")
+                                pixel_values = image_processor(imgs, return_tensors="pt").pixel_values
 
                         # Generate the caption
-                        pixel_values = inputs.pixel_values
-                        out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
+                        # pixel_values = inputs.pixel_values
+                        # out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
 
                         # Decode the caption
-                        caption = caption_processor.decode(out[0], skip_special_tokens=True)
+                        # caption = caption_processor.decode(out[0], skip_special_tokens=True)
+
+                        # generate caption - suggested settings
+                        generated_ids = model.generate(
+                            pixel_values,
+                            temperature=0.7,
+                            top_p=0.8,
+                            top_k=50,
+                            num_beams=4 # you can use 1 for even faster inference with a small drop in quality
+                        )
+                        caption = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
                         
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         search_captions += caption + " "
