@@ -105,7 +105,8 @@ class PhotoSearch(models.Model):
                     image_processor = AutoImageProcessor.from_pretrained(BLIP_MODEL_NAME)
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
-                    file_ext = os.path.splitext(image_path)[1].lower()
+                    # file_ext = os.path.splitext(image_path)[1].lower()
+                    file_ext = image_path.lower().split('.')[-1]
 
                     try:
                         if file_ext in ['.gif', '.heic', '.svg', '.tiff', '.webp', '.apng', '.avif', '.ico', '.icns']:
