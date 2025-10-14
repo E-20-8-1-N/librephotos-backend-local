@@ -6,7 +6,7 @@ from api import util
 
 from PIL import Image
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "cnmoro/tiny-image-captioning")
+BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-base")
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -39,7 +39,7 @@ class PhotoSearch(models.Model):
             try:
                 with Image.open(image_path) as img:
                     img.seek(1)
-                    return img
+                    return img.convert("RGB")
             except Exception as e:
                 util.logger.error(f"Failed to extract frame from {file_ext} image ({image_path}): {e}")
                 return None
@@ -49,7 +49,7 @@ class PhotoSearch(models.Model):
 
                 register_heif_opener()
                 with Image.open(image_path) as imgs:
-                    return imgs
+                    return imgs.convert("RGB")
             except Exception as e:
                 util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
                 return None
@@ -60,7 +60,7 @@ class PhotoSearch(models.Model):
 
                 png_data = cairosvg.svg2png(url=image_path)
                 with Image.open(BytesIO(png_data)) as svg_img:
-                    return svg_img
+                    return svg_img.convert("RGB")
             except Exception as e:
                 util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
                 return None
@@ -96,45 +96,29 @@ class PhotoSearch(models.Model):
                     search_captions += im2txt_caption + " "
                 else:
                     import gc
-                    from transformers import AutoTokenizer, AutoImageProcessor, VisionEncoderDecoderModel #, BlipProcessor, BlipForConditionalGeneration
+                    from transformers import BlipProcessor, BlipForConditionalGeneration
                     
-                    # caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
-                    # caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
-                    model = VisionEncoderDecoderModel.from_pretrained(BLIP_MODEL_NAME)
-                    tokenizer = AutoTokenizer.from_pretrained(BLIP_MODEL_NAME)
-                    image_processor = AutoImageProcessor.from_pretrained(BLIP_MODEL_NAME)
+                    caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
+                    caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
-                    # file_ext = os.path.splitext(image_path)[1].lower()
                     file_ext = image_path.lower().split('.')[-1]
 
                     try:
                         if file_ext in ['.gif', '.heic', '.svg', '.tiff', '.webp', '.apng', '.avif', '.ico', '.icns']:
                             image = self.image_format_convertor(image_path, file_ext)
                             # Process the image
-                            # inputs = caption_processor(images=image, return_tensors="pt")
-                            inputs = image_processor(image, return_tensors="pt")
+                            inputs = caption_processor(images=image, return_tensors="pt")
                         else:
-                            with Image.open(image_path) as imgs:
-                                # inputs = caption_processor(images=imgs, return_tensors="pt")
-                                inputs = image_processor(imgs, return_tensors="pt")
+                            with Image.open(image_path).convert("RGB") as imgs:
+                                inputs = caption_processor(images=imgs, return_tensors="pt")
 
                         # Generate the caption
                         pixel_values = inputs.pixel_values
-                        # out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
+                        out = caption_model.generate(pixel_values=pixel_values, max_length=20, num_beams=1)
 
                         # Decode the caption
-                        # caption = caption_processor.decode(out[0], skip_special_tokens=True)
-
-                        # generate caption - suggested settings
-                        generated_ids = model.generate(
-                            pixel_values=pixel_values,
-                            temperature=0.7,
-                            top_p=0.8,
-                            top_k=50,
-                            num_beams=3 # you can use 1 for even faster inference with a small drop in quality
-                        )
-                        caption = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+                        caption = caption_processor.decode(out[0], skip_special_tokens=True)
                         
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         search_captions += caption + " "
@@ -145,7 +129,7 @@ class PhotoSearch(models.Model):
                         self.photo.caption_instance.save()
 
                         # Free memory
-                        del generated_ids
+                        del out
                         gc.collect()
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}")
