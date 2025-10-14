@@ -115,7 +115,7 @@ class PhotoSearch(models.Model):
 
                         # Generate the caption
                         pixel_values = inputs.pixel_values
-                        out = caption_model.generate(pixel_values=pixel_values, max_length=30, num_beams=3)
+                        out = caption_model.generate(pixel_values=pixel_values, max_length=20, num_beams=3)
 
                         # Decode the caption
                         caption = caption_processor.decode(out[0], skip_special_tokens=True)
