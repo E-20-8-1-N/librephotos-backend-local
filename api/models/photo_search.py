@@ -131,7 +131,7 @@ class PhotoSearch(models.Model):
                             temperature=0.7,
                             top_p=0.8,
                             top_k=50,
-                            num_beams=1 # you can use 1 for even faster inference with a small drop in quality
+                            num_beams=3 # you can use 1 for even faster inference with a small drop in quality
                         )
                         caption = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
                         
