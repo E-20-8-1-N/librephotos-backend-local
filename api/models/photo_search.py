@@ -102,7 +102,7 @@ class PhotoSearch(models.Model):
                     caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
-                    file_ext = os.path.splitext(image_path)[1].lower()
+                    file_ext = image_path.lower().split('.')[-1]
 
                     try:
                         if file_ext in ['.gif', '.heic', '.svg', '.tiff', '.webp', '.apng', '.avif', '.ico', '.icns']:
@@ -115,7 +115,7 @@ class PhotoSearch(models.Model):
 
                         # Generate the caption
                         pixel_values = inputs.pixel_values
-                        out = caption_model.generate(pixel_values=pixel_values, max_length=50, num_beams=4)
+                        out = caption_model.generate(pixel_values=pixel_values, max_length=20, num_beams=1)
 
                         # Decode the caption
                         caption = caption_processor.decode(out[0], skip_special_tokens=True)
