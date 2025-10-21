@@ -547,21 +547,68 @@ def scan_missing_photos(user, job_id: UUID):
         )
     lrj.save()
     try:
-        exisisting_photos = Photo.objects.filter(owner=user.id).order_by("image_hash")
+        existing_photos = Photo.objects.filter(owner=user.id).order_by("image_hash")
 
-        paginator = Paginator(exisisting_photos, 5000)
+        paginator = Paginator(existing_photos, 5000)
         lrj.progress_target = paginator.num_pages
         lrj.save()
+
+        to_delete_hashes = []
+        deleted_count = 0
+
         for page in range(1, paginator.num_pages + 1):
-            for existing_photo in paginator.page(page).object_list:
-                existing_photo._check_files()
+            page_photos = paginator.page(page).object_list
+            for existing_photo in page_photos:
+                # Existing logic (kept) – may update internal state, sidecar checks, etc.
+                try:
+                    existing_photo._check_files()
+                except Exception:
+                    util.logger.exception(
+                        f"Photo {existing_photo.image_hash} _check_files failed"
+                    )
+
+                # New: Determine if photo is physically gone
+                try:
+                    if existing_photo.missing_on_disk():
+                        to_delete_hashes.append(existing_photo.image_hash)
+                except Exception:
+                    util.logger.exception(
+                        f"Photo {existing_photo.image_hash} missing_on_disk check failed"
+                    )
+
+            # Periodically delete in batches to keep memory down.
+            if len(to_delete_hashes) >= 500:
+                _bulk_delete_photos(to_delete_hashes)
+                deleted_count += len(to_delete_hashes)
+                util.logger.info(
+                    f"Deleted batch of {len(to_delete_hashes)} missing photos (total {deleted_count})"
+                )
+                to_delete_hashes = []
 
             update_scan_counter(job_id)
 
+        # Delete any remaining photos
+        if to_delete_hashes:
+            _bulk_delete_photos(to_delete_hashes)
+            deleted_count += len(to_delete_hashes)
+            util.logger.info(
+                f"Deleted final batch of {len(to_delete_hashes)} missing photos (total {deleted_count})"
+            )
+
         util.logger.info("Finished checking paths for missing photos")
+
     except Exception:
         util.logger.exception("An error occurred: ")
         lrj.failed = True
+
+
+def _bulk_delete_photos(image_hashes):
+    """Helper to bulk delete Photo objects by image_hash."""
+    # Hard delete. For soft delete, iterate and set flags instead.
+    qs = Photo.objects.filter(image_hash__in=image_hashes)
+    count = qs.count()
+    qs.delete()
+    util.logger.info(f"Bulk deleted {count} Photo objects")
 
 
 def generate_face_embeddings(user, job_id: UUID):
