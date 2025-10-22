@@ -542,6 +542,21 @@ class Photo(models.Model):
                 return True
         logger.info(f"Path is not valid: {duplicate_path}")
         return False
+    
+    def all_file_paths(self):
+        """Return a list of all physical file paths linked to this Photo."""
+        return [f.path for f in self.files.all()]
+
+    def missing_on_disk(self):
+        """
+        Determine if the photo is missing its core file(s) on disk.
+        Returns True if none of its linked file paths exist anymore.
+        """
+        paths = self.all_file_paths()
+        if len(paths) == 0:
+            return True
+        any_exists = any(os.path.exists(p) for p in paths)
+        return not any_exists
 
     def _set_embedded_media(self, obj):
         return obj.main_file.embedded_media
