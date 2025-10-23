@@ -6,7 +6,8 @@ from api import util
 
 from PIL import Image
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-base")
+BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['gif', 'apng', 'svg', 'heic', 'tiff', 'webp', 'avif', 'ico', 'icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
   'dng','rwz', 'cr2', 'nrw', 'eip', 'raf', 'erf', 'rw2', 'nef',
@@ -122,7 +123,7 @@ class PhotoSearch(models.Model):
                     file_ext = image_path.lower().split('.')[-1]
 
                     try:
-                        if file_ext in SPECIAL_IMAGE_FILE_EXTENSIONS or file_ext in RAW_IMAGE_FILE_EXTENSIONS:
+                        if file_ext in SPECIAL_IMAGE_FILE_EXTENSIONS + RAW_IMAGE_FILE_EXTENSIONS:
                             image = self.image_format_convertor(image_path, file_ext)
                             # Process the image
                             inputs = caption_processor(images=image, return_tensors="pt")
