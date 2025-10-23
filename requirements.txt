@@ -51,8 +51,9 @@ argon2-cffi==25.1.0
 onnxruntime==1.23.2
 # SentencePiece tokenizer for SigLIP 2
 sentencepiece==0.2.1
-# Dependencies for image HEIF/AVIF/SVG support
+# Dependencies for image HEIF/AVIF/SVG/RAW support
 pillow-heif==1.1.1
 cairosvg==2.8.2
+rawpy==0.25.1
 # For PAM authentication support
 django-pam==2.1.2
