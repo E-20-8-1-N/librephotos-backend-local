@@ -48,9 +48,10 @@ transformers==4.56.0
 # Dependencies for mistral quantized and multimodal models like Moondream
 llama-cpp-python==0.3.16
 
-# Dependencies for image HEIF/AVIF/SVG support
+# Dependencies for image HEIF/AVIF/SVG/RAW support
 pillow-heif==1.1.1
 cairosvg==2.8.2
+rawpy==0.25.1
 # For PAM authentication support
 django-pam==2.1.2
 
