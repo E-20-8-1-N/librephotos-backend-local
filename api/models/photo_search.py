@@ -84,6 +84,13 @@ def generate_image_caption(image_path: str, file_ext: str):
         gc.collect()
 
 BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-base")
+SPECIAL_IMAGE_FILE_EXTENSIONS = ['gif', 'apng', 'svg', 'heic', 'tiff', 'webp', 'avif', 'ico', 'icns']
+RAW_IMAGE_FILE_EXTENSIONS = [
+  'dng','rwz', 'cr2', 'nrw', 'eip', 'raf', 'erf', 'rw2', 'nef',
+  'arw', 'k25', 'srf', 'dcr', 'raw', 'crw', 'bay', '3fr', 'cs1',
+  'mef', 'orf', 'ari', 'sr2', 'kdc', 'mos', 'mfw', 'fff', 'cr3',
+  'srw', 'rwl', 'j6i', 'kc2', 'x3f', 'mrw', 'iiq', 'pef', 'cxi', 'mdc'
+]
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -111,8 +118,8 @@ class PhotoSearch(models.Model):
         Convert image file to supporting type.
         Returns a PIL.Image object or None if extraction fails.
         """
-        
-        if file_ext in ['.gif', '.apng']:
+
+        if file_ext in ['gif', 'apng']:
             try:
                 with Image.open(image_path) as img:
                     img.seek(1)
@@ -120,7 +127,7 @@ class PhotoSearch(models.Model):
             except Exception as e:
                 util.logger.error(f"Failed to extract frame from {file_ext} image ({image_path}): {e}")
                 return None
-        elif file_ext in ['.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']:
+        elif file_ext in ['heic', 'tiff', 'webp', 'avif', 'ico', 'icns']:
             try:
                 from pillow_heif import register_heif_opener
 
@@ -130,7 +137,7 @@ class PhotoSearch(models.Model):
             except Exception as e:
                 util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
                 return None
-        elif file_ext in ['.svg']:
+        elif file_ext in ['svg']:
             try:
                 import cairosvg
                 from io import BytesIO
@@ -140,6 +147,16 @@ class PhotoSearch(models.Model):
                     return svg_img.convert("RGB")
             except Exception as e:
                 util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
+                return None
+        elif file_ext in RAW_IMAGE_FILE_EXTENSIONS:
+            try:
+                import rawpy
+
+                with rawpy.imread(image_path) as raw:
+                    rgb = raw.postprocess()
+                    return Image.fromarray(rgb)
+            except Exception as e:
+                util.logger.error(f"Failed to convert raw image file {file_ext} image ({image_path}): {e}")
                 return None
         else:
             util.logger.warning(f"Unsupported file: {image_path}")
