@@ -72,8 +72,9 @@ sentencepiece==0.2.2
 # (unclip step). 1.4.0 ships cp310 AND cp311 wheels for manylinux2014_x86_64 and
 # win_amd64, so both the GPU image (Python 3.10) and the standard image build.
 pyclipper==1.4.0
-# Dependencies for image HEIF/AVIF/SVG support
+# Dependencies for image HEIF/AVIF/SVG/RAW support
 pillow-heif==1.1.1
 cairosvg==2.8.2
+rawpy==0.25.1
 # For PAM authentication support
 django-pam==2.1.2
