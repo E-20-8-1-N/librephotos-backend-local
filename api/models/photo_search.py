@@ -83,7 +83,8 @@ def generate_image_caption(image_path: str, file_ext: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-base")
+BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['gif', 'apng', 'svg', 'heic', 'tiff', 'webp', 'avif', 'ico', 'icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
   'dng','rwz', 'cr2', 'nrw', 'eip', 'raf', 'erf', 'rw2', 'nef',
