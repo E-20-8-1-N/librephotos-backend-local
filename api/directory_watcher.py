@@ -215,7 +215,8 @@ def walk_directory(directory, callback):
 
 def walk_files(scan_files, callback):
     for fpath in scan_files:
-        if os.path.isfile(fpath) and not os.path.basename(fpath).lower().endswith(".pdf"):
+        fext = os.path.splitext(fpath)[1].lower()
+        if os.path.isfile(fpath) and fext not in ['.pdf', 'pdf']:
             callback.append(fpath)
 
 
