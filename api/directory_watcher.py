@@ -58,6 +58,9 @@ else:
 
     def is_hidden(path):
         return os.path.basename(path).startswith(".")
+    
+    def is_pdf(path):
+        return os.path.basename(path).endswith(".pdf")
 
 
 def create_new_image(user, path) -> Photo | None:
@@ -218,7 +221,7 @@ def handle_new_image(user, path, job_id, photo=None):
 def walk_directory(directory, callback):
     for file in os.scandir(directory):
         fpath = os.path.join(directory, file)
-        if not is_hidden(fpath) and not should_skip(fpath):
+        if not is_hidden(fpath) and not should_skip(fpath) and not is_pdf(fpath):
             if os.path.isdir(fpath):
                 walk_directory(fpath, callback)
             else:
@@ -227,8 +230,7 @@ def walk_directory(directory, callback):
 
 def walk_files(scan_files, callback):
     for fpath in scan_files:
-        fext = os.path.splitext(fpath)[1].lower()
-        if os.path.isfile(fpath) and fext not in ['.pdf', 'pdf']:
+        if os.path.isfile(fpath) and not is_pdf(fpath):
             callback.append(fpath)
 
 
