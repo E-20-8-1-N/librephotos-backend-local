@@ -57,6 +57,9 @@ else:
 
     def is_hidden(path):
         return os.path.basename(path).startswith(".")
+    
+    def is_pdf(path):
+        return os.path.basename(path).endswith(".pdf")
 
 
 def create_new_image(user, path) -> Photo | None:
@@ -206,7 +209,7 @@ def handle_new_image(user, path, job_id, photo=None):
 def walk_directory(directory, callback):
     for file in os.scandir(directory):
         fpath = os.path.join(directory, file)
-        if not is_hidden(fpath) and not should_skip(fpath):
+        if not is_hidden(fpath) and not should_skip(fpath) and not is_pdf(fpath):
             if os.path.isdir(fpath):
                 walk_directory(fpath, callback)
             else:
@@ -215,7 +218,7 @@ def walk_directory(directory, callback):
 
 def walk_files(scan_files, callback):
     for fpath in scan_files:
-        if os.path.isfile(fpath):
+        if os.path.isfile(fpath) and not is_pdf(fpath):
             callback.append(fpath)
 
 
@@ -260,10 +263,13 @@ def photo_scanner(user, last_scan, full_scan, path, job_id):
 
 
 def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=[]):
-    if not os.path.exists(os.path.join(settings.MEDIA_ROOT, "thumbnails_big")):
-        os.mkdir(os.path.join(settings.MEDIA_ROOT, "square_thumbnails_small"))
-        os.mkdir(os.path.join(settings.MEDIA_ROOT, "square_thumbnails"))
-        os.mkdir(os.path.join(settings.MEDIA_ROOT, "thumbnails_big"))
+    thumbnail_dirs = [
+        os.path.join(settings.MEDIA_ROOT, "square_thumbnails_small"),
+        os.path.join(settings.MEDIA_ROOT, "square_thumbnails"),
+        os.path.join(settings.MEDIA_ROOT, "thumbnails_big"),
+    ]
+    for directory in thumbnail_dirs:
+        os.makedirs(directory, exist_ok=True)
     if LongRunningJob.objects.filter(job_id=job_id).exists():
         lrj = LongRunningJob.objects.get(job_id=job_id)
         lrj.started_at = datetime.datetime.now().replace(tzinfo=pytz.utc)
