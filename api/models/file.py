@@ -113,6 +113,13 @@ def is_raw(path):
     ]
     return fileextension.upper() in rawformats
 
+def is_heic(path):
+    fileextension = os.path.splitext(path)[1]
+    heicformats = [
+        ".HEIC",
+        ".HEIF",
+    ]
+    return fileextension.upper() in heicformats
 
 def is_metadata(path):
     fileextension = os.path.splitext(path)[1]
@@ -123,7 +130,7 @@ def is_metadata(path):
 
 
 def is_valid_media(path):
-    if is_video(path) or is_raw(path) or is_metadata(path):
+    if is_video(path) or is_raw(path) or is_heic(path) or is_metadata(path):
         return True
     try:
         pyvips.Image.thumbnail(path, 10000, height=200, size=pyvips.enums.Size.DOWN)
