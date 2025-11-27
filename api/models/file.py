@@ -113,6 +113,13 @@ def is_raw(path):
     ]
     return fileextension.upper() in rawformats
 
+def is_heic(path):
+    fileextension = os.path.splitext(path)[1]
+    heicformats = [
+        ".HEIC",
+        ".HEIF",
+    ]
+    return fileextension.upper() in heicformats
 
 def is_metadata(path):
     fileextension = os.path.splitext(path)[1]
