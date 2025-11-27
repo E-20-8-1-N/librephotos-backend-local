@@ -51,6 +51,8 @@ class File(models.Model):
 
     def _find_out_type(self):
         self.type = File.IMAGE
+        if is_heic(self.path):
+            self.type = File.IMAGE
         if is_raw(self.path):
             self.type = File.RAW_FILE
         if is_video(self.path):
