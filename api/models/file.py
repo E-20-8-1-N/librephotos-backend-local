@@ -3,7 +3,6 @@ import os
 
 import magic
 import pyvips
-from PIL import Image
 from django.db import models
 
 from api import util
@@ -114,21 +113,12 @@ def is_raw(path):
     ]
     return fileextension.upper() in rawformats
 
-def is_heic(path):
-    fileextension = os.path.splitext(path)[1]
-    heicformats = [
-        ".HEIC",
-        ".HEIF",
-    ]
-    return fileextension.upper() in heicformats
-
 def is_metadata(path):
     fileextension = os.path.splitext(path)[1]
     rawformats = [
         ".XMP",
     ]
     return fileextension.upper() in rawformats
-
 
 def is_valid_media(path):
     ext = os.path.splitext(path)[1].upper()
@@ -146,21 +136,7 @@ def is_valid_media(path):
         return True
     except Exception as e:
         util.logger.info(f"Could not handle {path}, because {str(e)}")
-        # return False
-    if Image is not None:
-        try:
-            with Image.open(path) as img:
-                img.verify()
-            util.logger.info(f"Pillow successfully validated image file {path}")
-            return True
-        except Exception as e:
-            util.logger.info(f"Pillow could not handle {path}, because {str(e)}")
-    else:
-        util.logger.warning(
-            f"Pillow is not installed; cannot fallback when pyvips fails for {path}"
-        )
-    util.logger.info(f"Could not handle {path} with either pyvips or Pillow")
-    return False
+        return False
 
 
 def calculate_hash(user, path):
