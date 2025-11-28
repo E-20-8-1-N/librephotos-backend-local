@@ -135,6 +135,11 @@ def is_valid_media(path):
         util.logger.info(f"pyvips successfully validated image file {path}")
         return True
     except Exception as e:
+        if ext in [".HEIC", ".HEIF"]:
+            util.logger.warning(
+                f"Failed to generate thumbnail for HEIC/HEIF file {path}, but accepting it as valid media anyway. Error: {e}"
+            )
+            return True
         util.logger.info(f"Could not handle {path}, because {str(e)}")
         return False
 
