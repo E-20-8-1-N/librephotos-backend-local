@@ -96,8 +96,6 @@ class File(models.Model):
 
     def _find_out_type(self):
         self.type = File.IMAGE
-        if is_heic(self.path):
-            self.type = File.IMAGE
         if is_raw(self.path):
             self.type = File.RAW_FILE
         if is_video(self.path):
@@ -193,7 +191,21 @@ def is_valid_media(path, user) -> bool:
             return True
     except Exception as e:
         util.logger.info(f"Could not handle {path}, because {str(e)}")
-        return False
+        # return False
+    if Image is not None:
+        try:
+            with Image.open(path) as img:
+                img.verify()
+            util.logger.info(f"Pillow successfully validated image file {path}")
+            return True
+        except Exception as e:
+            util.logger.info(f"Pillow could not handle {path}, because {str(e)}")
+    else:
+        util.logger.warning(
+            f"Pillow is not installed; cannot fallback when pyvips fails for {path}"
+        )
+    util.logger.info(f"Could not handle {path} with either pyvips or Pillow")
+    return False
 
 
 def calculate_hash(user, path):
