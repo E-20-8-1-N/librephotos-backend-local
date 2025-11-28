@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 
 from librephotos.logging_bootstrap import (
@@ -551,3 +552,13 @@ SOCIALACCOUNT_STORE_TOKENS = False
 # username/password login is our own simplejwt endpoint and is untouched, so
 # hybrid login still works as the maintainer asked.
 SOCIALACCOUNT_ONLY = True
+
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    logging.getLogger(__name__).info("Registered HEIC/HEIF opener via pillow_heif.")
+except ImportError:
+    logging.getLogger(__name__).warning(
+        "pillow_heif not installed - HEIC/HEIF decoding may not work."
+    )
