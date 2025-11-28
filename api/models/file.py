@@ -3,6 +3,7 @@ import os
 
 import magic
 import pyvips
+from PIL import Image
 from django.db import models
 
 from api import util
@@ -51,8 +52,6 @@ class File(models.Model):
 
     def _find_out_type(self):
         self.type = File.IMAGE
-        if is_heic(self.path):
-            self.type = File.IMAGE
         if is_raw(self.path):
             self.type = File.RAW_FILE
         if is_video(self.path):
@@ -132,18 +131,39 @@ def is_metadata(path):
 
 
 def is_valid_media(path, user) -> bool:
+    ext = os.path.splitext(path)[1].upper()
+    heif_exts = [".HEIC", ".HEIF"]
+    
     if is_video(path=path) or is_metadata(path=path):
+        util.logger.info(f"Valid non-image media: {path}")
         return True
     if is_raw(path=path):
         if user.skip_raw_files:
             return False
         return True
+    if ext in heif_exts:
+        util.logger.info(f"Handling HEIC/HEIF file: {path}")
     try:
         pyvips.Image.thumbnail(path, 10000, height=200, size=pyvips.enums.Size.DOWN)
+        util.logger.info(f"pyvips successfully validated image file {path}")
         return True
     except Exception as e:
         util.logger.info(f"Could not handle {path}, because {str(e)}")
-        return False
+        # return False
+    if Image is not None:
+        try:
+            with Image.open(path) as img:
+                img.verify()
+            util.logger.info(f"Pillow successfully validated image file {path}")
+            return True
+        except Exception as e:
+            util.logger.info(f"Pillow could not handle {path}, because {str(e)}")
+    else:
+        util.logger.warning(
+            f"Pillow is not installed; cannot fallback when pyvips fails for {path}"
+        )
+    util.logger.info(f"Could not handle {path} with either pyvips or Pillow")
+    return False
 
 
 def calculate_hash(user, path):
