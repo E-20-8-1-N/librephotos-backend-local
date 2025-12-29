@@ -122,7 +122,7 @@ def get_metadata(media_file, tags, try_sidecar=True, struct=False):
         "files_by_reverse_priority": files_by_reverse_priority,
         "struct": struct,
     }
-    response = requests.post(f"http://{BACKEND_HOST}:8010/get-tags", json=json).json()
+    response = requests.post(f"http://{BACKEND_HOST}8010/get-tags", json=json).json()
     return response["values"]
 
 

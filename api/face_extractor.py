@@ -1,5 +1,7 @@
 import numpy as np
 import PIL
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 
 from api.exif_tags import Tags
 from api.face_recognition import get_face_locations

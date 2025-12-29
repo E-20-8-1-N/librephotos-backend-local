@@ -1,6 +1,5 @@
 import datetime
 import os
-import logging
 
 # --- Configuration (from Environment Variables) ---
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
@@ -302,13 +301,3 @@ CHUNKED_UPLOAD_TO = os.path.join("chunked_uploads")
 
 DEFAULT_FAVORITE_MIN_RATING = os.environ.get("DEFAULT_FAVORITE_MIN_RATING", 4)
 IMAGE_SIMILARITY_SERVER = f"http://{BACKEND_HOST}:8002"
-
-try:
-    from pillow_heif import register_heif_opener
-
-    register_heif_opener()
-    logging.getLogger(__name__).info("Registered HEIC/HEIF opener via pillow_heif.")
-except ImportError:
-    logging.getLogger(__name__).warning(
-        "pillow_heif not installed - HEIC/HEIF decoding may not work."
-    )
