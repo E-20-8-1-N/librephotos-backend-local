@@ -128,11 +128,8 @@ def is_valid_media(path, user) -> bool:
     ext = os.path.splitext(path)[1].upper()
     heif_exts = [".HEIC", ".HEIF"]
 
-    if is_video(path=path) or is_metadata(path=path):
-        return True
-    if is_raw(path=path):
-        if user.skip_raw_files:
-            return False
+    if is_video(path) or is_raw(path) or is_metadata(path):
+        util.logger.info(f"Valid non-image media: {path}")
         return True
     try:
         pyvips.Image.thumbnail(path, 10000, height=200, size=pyvips.enums.Size.DOWN)

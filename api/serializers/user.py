@@ -38,8 +38,6 @@ class UserSerializer(serializers.ModelSerializer):
             "save_metadata_to_disk": {"required": False},
             "text_alignment": {"required": False},
             "header_size": {"required": False},
-            "skip_raw_files": {"required": False},
-            "slideshow_interval": {"required": False},
         }
         fields = (
             "id",
@@ -78,8 +76,6 @@ class UserSerializer(serializers.ModelSerializer):
             "confidence_unknown_face",
             "min_samples",
             "cluster_selection_epsilon",
-            "skip_raw_files",
-            "slideshow_interval",
         )
 
     def validate_nextcloud_app_password(self, value):
@@ -239,14 +235,6 @@ class UserSerializer(serializers.ModelSerializer):
         if "llm_settings" in validated_data:
             instance.llm_settings = validated_data.pop("llm_settings")
             instance.save()
-        if "skip_raw_files" in validated_data:
-            instance.skip_raw_files = validated_data.pop("skip_raw_files")
-            instance.save()
-            logger.info(f"Updated skip_raw_files to {instance.skip_raw_files} for user {instance.username}")
-        if "slideshow_interval" in validated_data:
-            instance.slideshow_interval = validated_data.pop("slideshow_interval")
-            instance.save()
-            logger.info(f"Updated slideshow_interval to {instance.slideshow_interval} for user {instance.username}")
 
         return instance
 
@@ -348,7 +336,6 @@ class ManageUserSerializer(serializers.ModelSerializer):
         fields = (
             "username",
             "scan_directory",
-            "skip_raw_files",
             "confidence",
             "semantic_search_topk",
             "last_login",
@@ -366,7 +353,6 @@ class ManageUserSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "password": {"write_only": True},
             "scan_directory": {"required": False},
-            "skip_raw_files": {"required": False},
         }
 
     def get_photo_count(self, obj) -> int:
@@ -396,9 +382,6 @@ class ManageUserSerializer(serializers.ModelSerializer):
                     )
                 else:
                     raise ValidationError("Scan directory does not exist")
-        if "skip_raw_files" in validated_data:
-            instance.skip_raw_files = validated_data.pop("skip_raw_files")
-
         if "username" in validated_data:
             username = validated_data.pop("username")
             if username != "":
