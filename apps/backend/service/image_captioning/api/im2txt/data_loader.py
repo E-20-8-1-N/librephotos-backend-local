@@ -2,6 +2,8 @@ import os
 
 import torch
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from torch.utils import data
 
 
