@@ -4,6 +4,8 @@ import face_recognition
 import gevent
 import numpy as np
 import PIL
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from flask import Flask, request
 from gevent.pywsgi import WSGIServer
 

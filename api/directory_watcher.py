@@ -270,6 +270,103 @@ def _file_was_modified_after(filepath, time):
         return False
     return datetime.datetime.fromtimestamp(modified).replace(tzinfo=pytz.utc) > time
 
+def wait_for_group_and_process_metadata(
+    group_id: str,
+    metadata_paths: list[str],
+    user_id: int,
+    full_scan: bool,
+    job_id: UUID | str,
+    expected_count: int,
+    *,
+    attempt: int = 1,
+    max_attempts: int = 2,
+    **kwargs  # Django-Q may pass additional arguments like 'schedule'
+):
+    """
+    Sentinel task: waits until the expected number of image/video tasks in the group complete,
+    then processes metadata files. It runs inside a django-q worker (non-blocking for the caller).
+
+    Failure handling:
+    - If the group is not complete yet, it will re-enqueue itself up to `max_attempts`.
+    - After exhausting attempts, it proceeds with metadata processing anyway (best-effort).
+    """
+    from django_q.tasks import count_group
+    from django.contrib.auth import get_user_model
+
+    util.logger.info(
+        f"Sentinel attempt {attempt}/{max_attempts} for group {group_id} (expecting {expected_count} tasks)"
+    )
+
+    # Check current completion count for the group
+    try:
+        completed = count_group(group_id)  # counts successes by default
+    except Exception as e:
+        util.logger.warning(
+            f"Could not read group status for {group_id}: {e}. Treating as incomplete."
+        )
+        completed = 0
+
+    # Normalize to an int to avoid None-related type issues
+    completed_int = int(completed or 0)
+
+    if completed_int < expected_count and attempt < max_attempts:
+        util.logger.info(
+            f"Group {group_id} not complete yet: {completed_int}/{expected_count}. Re-enqueue sentinel (attempt {attempt+1})."
+        )
+        # Requeue the sentinel to check again later
+        AsyncTask(
+            wait_for_group_and_process_metadata,
+            group_id,
+            metadata_paths,
+            user_id,
+            full_scan,
+            job_id,
+            expected_count,
+            attempt=attempt + 1,
+            max_attempts=max_attempts,
+            schedule=datetime.timedelta(seconds=5),
+        ).run()
+        return
+
+    # Proceed with metadata processing (either completed or after exhausting attempts)
+    if completed_int < expected_count:
+        util.logger.warning(
+            f"Proceeding with metadata despite incomplete image group {group_id}: {completed_int}/{expected_count}."
+        )
+    else:
+        util.logger.info(
+            f"Image group {group_id} completed. Processing {len(metadata_paths)} metadata files"
+        )
+
+    if not metadata_paths:
+        util.logger.info("No metadata files to process after images completion")
+        return
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        util.logger.warning(
+            f"User {user_id} not found when processing metadata for job {job_id}"
+        )
+        return
+
+    last_scan = (
+        LongRunningJob.objects.filter(finished=True)
+        .filter(job_type=LongRunningJob.JOB_SCAN_PHOTOS)
+        .filter(started_by=user)
+        .order_by("-finished_at")
+        .first()
+    )
+
+    for path in metadata_paths:
+        try:
+            photo_scanner(user, last_scan, full_scan, path, job_id)
+        except Exception as e:
+            util.logger.exception(
+                f"Failed processing metadata {path} for job {job_id}: {e}"
+            )
+
 
 def wait_for_group_and_process_metadata(
     group_id: str,

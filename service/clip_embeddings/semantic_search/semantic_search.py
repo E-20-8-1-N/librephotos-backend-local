@@ -2,6 +2,8 @@ import gc
 
 import numpy as np
 import PIL
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from sentence_transformers import SentenceTransformer
 
 
