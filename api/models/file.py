@@ -124,7 +124,7 @@ def is_metadata(path):
     ]
     return fileextension.upper() in rawformats
 
-def is_valid_media(path, user) -> bool:
+def is_valid_media(path):
     ext = os.path.splitext(path)[1].upper()
     heif_exts = [".HEIC", ".HEIF"]
 
