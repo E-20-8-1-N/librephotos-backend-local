@@ -3,6 +3,8 @@ import time
 import gevent
 import numpy as np
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from flask import Flask, request
 from gevent.pywsgi import WSGIServer
 
