@@ -4,6 +4,9 @@ import subprocess
 import pyvips
 import requests
 from django.conf import settings
+from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 
 from api import util
 from api.models.file import is_raw
@@ -12,12 +15,12 @@ from api.models.file import is_raw
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def create_thumbnail(input_path, output_height, output_path, hash, file_type):
+    complete_path = os.path.join(
+        settings.MEDIA_ROOT, output_path, hash + file_type
+    ).strip()
     try:
         if is_raw(input_path):
             if "thumbnails_big" in output_path:
-                complete_path = os.path.join(
-                    settings.MEDIA_ROOT, output_path, hash + file_type
-                ).strip()
                 json = {
                     "source": input_path,
                     "destination": complete_path,
@@ -36,24 +39,26 @@ def create_thumbnail(input_path, output_height, output_path, hash, file_type):
                     height=output_height,
                     size=pyvips.enums.Size.DOWN,
                 )
-                complete_path = os.path.join(
-                    settings.MEDIA_ROOT, output_path, hash + file_type
-                ).strip()
                 x.write_to_file(complete_path, Q=95)
             return complete_path
         else:
             x = pyvips.Image.thumbnail(
                 input_path, 10000, height=output_height, size=pyvips.enums.Size.DOWN
             )
-            complete_path = os.path.join(
-                settings.MEDIA_ROOT, output_path, hash + file_type
-            ).strip()
             x.write_to_file(complete_path, Q=95)
             return complete_path
     except Exception as e:
-        util.logger.error(f"Could not create thumbnail for file {input_path}")
-        raise e
-
+        try:
+            util.logger.warning(f"Pyvips failed for {input_path}, trying Pillow fallback. Error: {e}")
+            with Image.open(input_path) as img:
+                aspect_ratio = img.width / img.height
+                new_width = int(output_height * aspect_ratio)
+                img.thumbnail((new_width, output_height), Image.Resampling.LANCZOS)
+                img.save(complete_path, quality=95)
+            return complete_path
+        except Exception as e_fallback:
+            util.logger.error(f"Could not create thumbnail for file {input_path} using fallback. Error: {e_fallback}")
+            raise e
 
 def create_animated_thumbnail(input_path, output_height, output_path, hash, file_type):
     try:
