@@ -4,6 +4,9 @@ import stat
 import uuid
 from uuid import UUID
 
+from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 import pytz
 from constance import config as site_config
 from django import db
