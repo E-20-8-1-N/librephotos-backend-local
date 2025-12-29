@@ -6,6 +6,8 @@ from io import BytesIO
 
 import numpy as np
 import PIL
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from django.core.files.base import ContentFile
 from django.db import models
 from django.db.models import Q

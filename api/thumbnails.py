@@ -60,6 +60,7 @@ def create_thumbnail(input_path, output_height, output_path, hash, file_type):
             util.logger.error(f"Could not create thumbnail for file {input_path} using fallback. Error: {e_fallback}")
             raise e
 
+
 def create_animated_thumbnail(input_path, output_height, output_path, hash, file_type):
     try:
         output = os.path.join(

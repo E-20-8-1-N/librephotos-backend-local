@@ -29,7 +29,20 @@ def is_valid_path(path, root_path):
     abs_path = os.path.abspath(path)
     abs_root = os.path.abspath(root_path)
 
-    return abs_path.startswith(abs_root)
+    try:
+        common = os.path.commonpath([abs_path, abs_root])
+    except ValueError:
+        # Raised when paths are on different drives
+        return False
+
+    if common != abs_root:
+        return False
+
+    # Guard against paths that merely share a prefix with the root path
+    # (e.g. /root and /root_dir). By normalising with os.path.commonpath
+    # and checking for path separators we ensure the path really resides
+    # within the root directory or is the directory itself.
+    return abs_path == abs_root or abs_path.startswith(abs_root + os.sep)
 
 
 def is_number(s):
@@ -109,7 +122,7 @@ def get_metadata(media_file, tags, try_sidecar=True, struct=False):
         "files_by_reverse_priority": files_by_reverse_priority,
         "struct": struct,
     }
-    response = requests.post(f"http://{BACKEND_HOST}:8010/get-tags", json=json).json()
+    response = requests.post(f"http://{BACKEND_HOST}8010/get-tags", json=json).json()
     return response["values"]
 
 
