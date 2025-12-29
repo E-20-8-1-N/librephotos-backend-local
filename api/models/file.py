@@ -3,6 +3,9 @@ import os
 
 import magic
 import pyvips
+from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from django.db import models
 
 from api import util
@@ -139,11 +142,17 @@ def is_valid_media(path, user) -> bool:
         util.logger.info(f"pyvips successfully validated image file {path}")
         return True
     except Exception as e:
-        if ext in [".HEIC", ".HEIF"]:
-            util.logger.warning(
-                f"Failed to generate thumbnail for HEIC/HEIF file {path}, but accepting it as valid media anyway. Error: {e}"
-            )
-            return True
+        if ext in heif_exts:
+            try:
+                with Image.open(path) as img:
+                    img.verify() # Validates file integrity
+                util.logger.info(f"Pillow successfully validated HEIC file {path} (Pyvips failed)")
+                return True
+            except Exception as e_pil:
+                util.logger.warning(
+                    f"Failed to validate HEIC file {path} with both Pyvips and Pillow. Error: {e_pil}"
+                )
+                return False
         util.logger.info(f"Could not handle {path}, because {str(e)}")
         return False
 
