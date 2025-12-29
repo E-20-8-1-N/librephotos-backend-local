@@ -6,6 +6,7 @@ from io import BytesIO
 import numpy as np
 import PIL
 from django.conf import settings
+from pillow_heif import register_heif_opener
 from django.core.files.base import ContentFile
 from django.db import models
 from django.db.models import Q
@@ -21,6 +22,8 @@ from api.metadata.writer import write_metadata
 from api.models.file import File
 from api.models.user import User, get_deleted_user
 from api.util import FACE_OVERLAP_IOU_THRESHOLD, calculate_iou, logger
+
+register_heif_opener()
 
 
 def _overlaps_existing_face(existing_face_locations, top, right, bottom, left):

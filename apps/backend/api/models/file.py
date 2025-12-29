@@ -167,6 +167,7 @@ def is_raw(path):
     ]
     return fileextension.upper() in rawformats
 
+
 def is_metadata(path):
     fileextension = os.path.splitext(path)[1]
     rawformats = [
