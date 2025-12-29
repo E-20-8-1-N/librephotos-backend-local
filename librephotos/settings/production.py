@@ -158,7 +158,7 @@ CONSTANCE_CONFIG = {
         str,
     ),
     "MAP_API_PROVIDER": (
-        os.environ.get("MAP_API_PROVIDER", "nominatim"),
+        os.environ.get("MAP_API_PROVIDER", "photon"),
         "Map Provider",
         "map_api_provider",
     ),
@@ -237,8 +237,6 @@ DATABASES = {
         "PASSWORD": os.environ.get("DB_PASS", "AaAa1234"),
         "HOST": os.environ.get("DB_HOST", "db"),
         "PORT": os.environ.get("DB_PORT", "5432"),
-        # Using persistent connections instead of pooling due to Django 5.2 pooling bugs
-        # (type conversion issues with COUNT queries - see error with UUID returned as string)
         "CONN_MAX_AGE": 600,
         "CONN_HEALTH_CHECKS": True,
     },
@@ -257,15 +255,6 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
-]
-
-# Password Hashers - Argon2 is faster and more secure than PBKDF2
-# Existing passwords will continue to work (PBKDF2 fallback)
-# New passwords and password changes will use Argon2
-PASSWORD_HASHERS = [
-    "django.contrib.auth.hashers.Argon2PasswordHasher",
-    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
-    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
 ]
 
 LANGUAGE_CODE = "en-us"
