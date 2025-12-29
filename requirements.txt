@@ -56,4 +56,3 @@ cairosvg==2.8.2
 rawpy==0.25.1
 # For PAM authentication support
 django-pam==2.1.2
-
