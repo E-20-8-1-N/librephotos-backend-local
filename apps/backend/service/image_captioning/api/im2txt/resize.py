@@ -1,6 +1,8 @@
 import os
 
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 
 image_dir = "api/im2txt/data/train2014/"
 output_dir = "api/im2txt/data/resized2014/"
