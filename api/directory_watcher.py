@@ -87,7 +87,7 @@ def create_new_image(user, path) -> Photo | None:
         photo_instance = create_new_image(current_user, "/path/to/image.jpg")
 
     """
-    if not is_valid_media(path=path, user=user):
+    if not is_valid_media(path):
         return
     hash = calculate_hash(user, path)
     if File.embedded_media.through.objects.filter(Q(to_file_id=hash)).exists():
