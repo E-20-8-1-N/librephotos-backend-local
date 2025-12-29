@@ -3,6 +3,8 @@ import requests
 import base64
 import io
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from constance import config as site_config
 
 # --- Configuration (from Environment Variables) ---

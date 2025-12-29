@@ -6,6 +6,8 @@ import os
 import numpy as np
 import torch
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 from places365 import wideresnet
 from torch.autograd import Variable as V
 from torch.nn import functional as F
