@@ -4,9 +4,13 @@ import subprocess
 import pyvips
 import requests
 from django.conf import settings
+from PIL import Image
+from pillow_heif import register_heif_opener
 
 from api import util
 from api.models.file import is_raw
+
+register_heif_opener()
 
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
@@ -121,8 +125,22 @@ def create_thumbnail(
             )
         return _resize_big_thumbnail(output_height, complete_path, hash, file_type)
     except Exception as e:
-        util.logger.error(f"Could not create thumbnail for file {input_path}")
-        raise e
+        try:
+            util.logger.warning(
+                f"Pyvips failed for {input_path}, trying Pillow fallback. Error: {e}"
+            )
+            with Image.open(input_path) as img:
+                aspect_ratio = img.width / img.height
+                new_width = int(output_height * aspect_ratio)
+                img.thumbnail((new_width, output_height), Image.Resampling.LANCZOS)
+                img.save(complete_path, quality=95)
+            return complete_path
+        except Exception as e_fallback:
+            util.logger.error(
+                f"Could not create thumbnail for file {input_path} using fallback. "
+                f"Error: {e_fallback}"
+            )
+            raise
 
 
 def create_animated_thumbnail(input_path, output_height, output_path, hash, file_type):
