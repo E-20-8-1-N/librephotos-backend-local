@@ -131,8 +131,6 @@ def is_valid_media(path):
         util.logger.info(f"Valid non-image media: {path}")
         return True
 
-    if ext in heif_exts:
-        util.logger.info(f"Handling HEIC/HEIF file: {path}")
     try:
         pyvips.Image.thumbnail(path, 10000, height=200, size=pyvips.enums.Size.DOWN)
         util.logger.info(f"pyvips successfully validated image file {path}")

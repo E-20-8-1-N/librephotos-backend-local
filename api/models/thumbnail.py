@@ -2,6 +2,8 @@ import os
 
 from django.db import models
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 
 from api.exif_tags import Tags
 from api.models.photo import Photo

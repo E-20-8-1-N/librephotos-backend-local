@@ -164,41 +164,64 @@ def handle_new_image(user, path, job_id, photo=None):
             util.logger.info(f"job {job_id}: save image: {path}, elapsed: {elapsed}")
         if photo:
             util.logger.info(f"job {job_id}: handling image {path}")
+            # libvips system libraries is too old for new HEICs
             # Create or get thumbnail instance
             thumbnail, _ = Thumbnail.objects.get_or_create(photo=photo)
-            thumbnail._generate_thumbnail()
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            util.logger.info(
-                f"job {job_id}: generate thumbnails: {path}, elapsed: {elapsed}"
-            )
-            thumbnail._calculate_aspect_ratio()
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            util.logger.info(
-                f"job {job_id}: calculate aspect ratio: {path}, elapsed: {elapsed}"
-            )
-            photo._extract_exif_data(True)
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            util.logger.info(
-                f"job {job_id}: extract exif data: {path}, elapsed: {elapsed}"
-            )
-
-            photo._extract_date_time_from_exif(True)
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            util.logger.info(
-                f"job {job_id}: extract date time: {path}, elapsed: {elapsed}"
-            )
-            thumbnail._get_dominant_color()
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            util.logger.info(
-                f"job {job_id}: get dominant color: {path}, elapsed: {elapsed}"
-            )
-            search_instance, created = PhotoSearch.objects.get_or_create(photo=photo)
-            search_instance.recreate_search_captions()
-            search_instance.save()
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            util.logger.info(
-                f"job {job_id}: search caption recreated: {path}, elapsed: {elapsed}"
-            )
+            try:
+                thumbnail._generate_thumbnail()
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                util.logger.info(
+                    f"job {job_id}: generate thumbnails: {path}, elapsed: {elapsed}"
+                )
+            except Exception as e:
+                util.logger.error(f"job {job_id}: Failed to generate thumbnail for {path}: {e}")
+            # Calculate Aspect Ratio
+            try:
+                thumbnail._calculate_aspect_ratio()
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                util.logger.info(
+                    f"job {job_id}: calculate aspect ratio: {path}, elapsed: {elapsed}"
+                )
+            except Exception as e:
+                util.logger.warning(f"job {job_id}: Failed to calculate aspect ratio for {path} (skipping): {e}")
+            # Extract EXIF Data
+            try:
+                photo._extract_exif_data(True)
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                util.logger.info(
+                    f"job {job_id}: extract exif data: {path}, elapsed: {elapsed}"
+                )
+            except Exception as e:
+                util.logger.error(f"job {job_id}: Failed to extract EXIF for {path}: {e}")
+            # Extract Date/Time
+            try:
+                photo._extract_date_time_from_exif(True)
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                util.logger.info(
+                    f"job {job_id}: extract date time: {path}, elapsed: {elapsed}"
+                )
+            except Exception as e:
+                 util.logger.error(f"job {job_id}: Failed to extract date/time for {path}: {e}")
+            # Dominant Color
+            try:
+                thumbnail._get_dominant_color()
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                util.logger.info(
+                    f"job {job_id}: get dominant color: {path}, elapsed: {elapsed}"
+                )
+            except Exception as e:
+                util.logger.warning(f"job {job_id}: Failed to get dominant color for {path}: {e}")
+            # Search Captions
+            try:
+                search_instance, created = PhotoSearch.objects.get_or_create(photo=photo)
+                search_instance.recreate_search_captions()
+                search_instance.save()
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                util.logger.info(
+                    f"job {job_id}: search caption recreated: {path}, elapsed: {elapsed}"
+                )
+            except Exception as e:
+                util.logger.error(f"job {job_id}: Failed to recreate search captions for {path}: {e}")
 
     except Exception as e:
         try:
