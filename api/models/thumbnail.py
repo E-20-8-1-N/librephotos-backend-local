@@ -3,6 +3,8 @@ import os
 from django.conf import settings
 from django.db import models
 from PIL import Image
+from pillow_heif import register_heif_opener
+register_heif_opener() # Register HEIF opener for Pillow
 
 from api.metadata.reader import get_metadata
 from api.metadata.tags import Tags
