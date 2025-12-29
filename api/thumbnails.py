@@ -113,6 +113,7 @@ def create_thumbnail(
         raise
 
 
+
 def create_animated_thumbnail(input_path, output_height, output_path, hash, file_type):
     try:
         output = os.path.join(
