@@ -96,6 +96,19 @@ class User(AbstractUser):
         SMALL = "small"
 
     header_size = models.TextField(choices=HeaderSize.choices, default=HeaderSize.LARGE)
+    skip_raw_files = models.BooleanField(default=False)
+    slideshow_interval = models.IntegerField(default=5)
+
+    # Duplicate detection settings
+    class DuplicateSensitivity(models.TextChoices):
+        STRICT = "strict"
+        NORMAL = "normal"
+        LOOSE = "loose"
+
+    duplicate_sensitivity = models.TextField(
+        choices=DuplicateSensitivity.choices, default=DuplicateSensitivity.NORMAL
+    )
+    duplicate_clear_existing = models.BooleanField(default=False)
 
 
 def get_admin_user():
