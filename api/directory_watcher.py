@@ -87,7 +87,7 @@ def create_new_image(user, path) -> Photo | None:
         photo_instance = create_new_image(current_user, "/path/to/image.jpg")
 
     """
-    if not is_valid_media(path):
+    if not is_valid_media(path=path, user=user):
         return
     hash = calculate_hash(user, path)
     if File.embedded_media.through.objects.filter(Q(to_file_id=hash)).exists():
@@ -185,8 +185,8 @@ def handle_new_image(user, path, job_id, photo=None):
             except Exception as e:
                 util.logger.warning(f"job {job_id}: Failed to calculate aspect ratio for {path} (skipping): {e}")
             # Calculate perceptual hash for duplicate detection
-            if thumbnail.thumbnail_big and os.path.exists(thumbnail.thumbnail_big.path):
-                try:
+            try:
+                if thumbnail.thumbnail_big and os.path.exists(thumbnail.thumbnail_big.path):
                     phash = calculate_hash_from_thumbnail(thumbnail.thumbnail_big.path)
                     if phash:
                         photo.perceptual_hash = phash
@@ -195,8 +195,8 @@ def handle_new_image(user, path, job_id, photo=None):
                         util.logger.info(
                             f"job {job_id}: calculate perceptual hash: {path}, elapsed: {elapsed}"
                         )
-                except Exception as e:
-                    util.logger.error(f"job {job_id}: Failed to calculate perceptual hash for {path}: {e}")
+            except Exception as e:
+                util.logger.error(f"job {job_id}: Failed to calculate perceptual hash for {path}: {e}")
             # Extract EXIF Data
             try:
                 photo._extract_exif_data(True)
@@ -243,6 +243,8 @@ def handle_new_image(user, path, job_id, photo=None):
             )
         except Exception:
             util.logger.exception(f"job {job_id}: could not load image {path}")
+    finally:
+        update_scan_counter(job_id)
 
 
 def walk_directory(directory, callback):
@@ -439,19 +441,85 @@ def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=[]):
             .order_by("-finished_at")
             .first()
         )
-        all = []
+        # Separate images/videos from metadata files to ensure we process media first
+        # and only then attach metadata (e.g., XMP sidecars) once the matching Photo exists.
+        images_and_videos = []
+        metadata_paths: list[str] = []
         for path in photo_list:
-            all.append((user, last_scan, full_scan, path, job_id))
+            if is_metadata(path):
+                metadata_paths.append(path)
+            else:
+                images_and_videos.append((user, last_scan, full_scan, path, job_id))
 
         lrj.progress_current = 0
         lrj.progress_target = files_found
         lrj.save()
         db.connections.close_all()
 
-        for photo in all:
-            photo_scanner(*photo)
+    # Phase 1: Decide which images/videos to process; group them so we can wait before metadata
+        image_group_id = str(uuid.uuid4())
+        queue_candidates: list[tuple] = []
+
+        for user_data, last_scan_data, full_scan_flag, path, job_id_data in images_and_videos:
+            files_to_check = [path]
+            files_to_check.extend(util.get_sidecar_files_in_priority_order(path))
+            if (
+                not Photo.objects.filter(files__path=path).exists()
+                or full_scan_flag
+                or not last_scan_data
+                or any([
+                    _file_was_modified_after(p, last_scan_data.finished_at)
+                    for p in files_to_check
+                ])
+            ):
+                queue_candidates.append((user_data, path, job_id_data))
+            else:
+                update_scan_counter(job_id_data)
+
+        util.logger.info(f"Queueing {len(queue_candidates)} images/videos")
+
+        # Enqueue image/video tasks
+        for user_data, path, job_id_data in queue_candidates:
+            AsyncTask(
+                handle_new_image,
+                user_data,
+                path,
+                job_id_data,
+                group=image_group_id,
+            ).run()
+
+        # If there are only metadata files (no images queued), process metadata now
+        if not queue_candidates and metadata_paths:
+            util.logger.info(
+                f"No images to process, processing {len(metadata_paths)} metadata files directly"
+            )
+            for path in metadata_paths:
+                photo_scanner(user, last_scan, full_scan, path, job_id)
+
+        # If there are images and metadata, enqueue a sentinel task that waits for the image group
+        if queue_candidates and metadata_paths:
+            util.logger.info(
+                f"Scheduling sentinel to process {len(metadata_paths)} metadata files after {len(queue_candidates)} images"
+            )
+            AsyncTask(
+                wait_for_group_and_process_metadata,
+                image_group_id,
+                metadata_paths,
+                user.id,
+                full_scan,
+                job_id,
+                len(queue_candidates),
+                attempt=1,
+                max_attempts=2,
+            ).run()
 
         util.logger.info(f"Scanned {files_found} files in : {scan_directory}")
+
+        # If no files were queued for processing (empty directory or all files already processed),
+        # mark the job as finished immediately since progress_current will equal progress_target (both 0)
+        LongRunningJob.objects.filter(
+            job_id=job_id, progress_current=F("progress_target")
+        ).update(finished=True, finished_at=timezone.now())
 
         util.logger.info("Finished updating album things")
 
@@ -468,7 +536,9 @@ def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=[]):
             )
             for photo in photos_with_missing_aspect_ratio:
                 try:
-                    photo.thumbnail._calculate_aspect_ratio()
+                    thumbnail = getattr(photo, 'thumbnail', None)
+                    if thumbnail and isinstance(thumbnail, Thumbnail):
+                        thumbnail._calculate_aspect_ratio()
                 except Exception as e:
                     util.logger.exception(
                         f"Could not calculate aspect ratio for photo {photo.image_hash}: {str(e)}"
