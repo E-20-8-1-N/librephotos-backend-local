@@ -183,17 +183,6 @@ def is_valid_media(path, user) -> bool:
             img.verify() # Reads file header to check validity
             return True
     except Exception as e:
-        if ext in heif_exts:
-            try:
-                with Image.open(path) as img:
-                    img.verify() # Validates file integrity
-                util.logger.info(f"Pillow successfully validated HEIC file {path} (Pyvips failed)")
-                return True
-            except Exception as e_pil:
-                util.logger.warning(
-                    f"Failed to validate HEIC file {path} with both Pyvips and Pillow. Error: {e_pil}"
-                )
-                return False
         util.logger.info(f"Could not handle {path}, because {str(e)}")
         return False
 
