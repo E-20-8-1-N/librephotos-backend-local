@@ -1,10 +1,9 @@
 import os
 import subprocess
 
-import pyvips
 import requests
 from django.conf import settings
-from PIL import Image
+from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 
@@ -14,12 +13,12 @@ from api.models.file import is_raw
 # --- Configuration (from Environment Variables) ---
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
-def _apply_local_orientation(image: pyvips.Image, local_orientation: int) -> pyvips.Image:
-    """Apply a user-specified orientation transform to an already-upright pyvips image.
+def _apply_local_orientation(image: Image.Image, local_orientation: int) -> Image.Image:
+    """Apply a user-specified orientation transform to an already-upright Pillow image.
 
     ``local_orientation`` follows the EXIF Orientation convention (1-8).
     Orientation 1 is the identity (no change).  The image passed in is assumed
-    to be already auto-rotated by pyvips (i.e. it is visually upright), so
+    to be already auto-rotated by Pillow (i.e. it is visually upright), so
     this function applies *additional* rotation/flip on top.
 
     EXIF orientation semantics (applied to a visually-upright image):
@@ -35,25 +34,25 @@ def _apply_local_orientation(image: pyvips.Image, local_orientation: int) -> pyv
     if local_orientation == 1 or local_orientation is None:
         return image
     if local_orientation == 2:
-        return image.flip(pyvips.enums.Direction.HORIZONTAL)
+        return ImageOps.mirror(image)
     if local_orientation == 3:
-        return image.rot180()
+        return image.rotate(180, expand=True)
     if local_orientation == 4:
-        return image.flip(pyvips.enums.Direction.VERTICAL)
+        return ImageOps.flip(image)
     if local_orientation == 5:
         # 90° CCW + flip H
-        return image.rot90().flip(pyvips.enums.Direction.HORIZONTAL)
+        return ImageOps.mirror(image.rotate(90, expand=True))
     if local_orientation == 6:
         # pyvips.rot270() rotates 270° counter-clockwise, which is the same
         # as 90° clockwise — matching EXIF orientation 6 (display: 90° CW).
-        return image.rot270()
+        return image.rotate(-90, expand=True) # or 270
     if local_orientation == 7:
         # 90° CW + flip H
-        return image.rot270().flip(pyvips.enums.Direction.HORIZONTAL)
+        return ImageOps.mirror(image.rotate(-90, expand=True))
     if local_orientation == 8:
         # pyvips.rot90() rotates 90° counter-clockwise — matching EXIF
         # orientation 8 (display: 270° CW = 90° CCW).
-        return image.rot90()
+        return image.rotate(90, expand=True)
     return image
 
 
@@ -62,8 +61,12 @@ def create_thumbnail(
 ):
     complete_path = os.path.join(
         settings.MEDIA_ROOT, output_path, hash + file_type
-    ).strip()
+    )
+    
+    source_path = input_path
+
     try:
+        # ====================== RAW File Handling ======================
         if is_raw(input_path):
             if "thumbnails_big" in output_path:
                 json = {
@@ -71,51 +74,43 @@ def create_thumbnail(
                     "destination": complete_path,
                     "height": output_height,
                 }
-                response = requests.post(f"http://{BACKEND_HOST}:8003/", json=json).json()
-                # The RAW service applies auto-orientation internally.  Apply
-                # any user-specified rotation on top.
+                response = requests.post(f"http://{BACKEND_HOST}:8003/",json=json).json()
+                # The RAW service already applies auto-orientation.
+                # Apply any additional user-specified local orientation on top.
                 if local_orientation and local_orientation != 1:
-                    x = pyvips.Image.new_from_file(complete_path)
-                    x = x.copy_memory()
-                    x = _apply_local_orientation(x, local_orientation)
-                    x.write_to_file(complete_path, Q=95)
+                    with Image.open(complete_path) as img:
+                        img = img.copy()  # Ensure we don't modify in-place unexpectedly
+                        img = ImageOps.exif_transpose(img)  # Safety
+                        img = _apply_local_orientation(img, local_orientation)
+                        img = img.convert("RGB")
+                        img.save(complete_path, quality=95, optimize=True)
                 return response["thumbnail"]
             else:
-                # only encode raw image in worse case, smaller thumbnails can get created from the big thumbnail instead
+                # Smaller thumbnails: derive from the already-created big thumbnail
                 big_thumbnail_path = os.path.join(
                     settings.MEDIA_ROOT, "thumbnails_big", hash + file_type
                 )
-                x = pyvips.Image.thumbnail(
-                    big_thumbnail_path,
-                    10000,
-                    height=output_height,
-                    size=pyvips.enums.Size.DOWN,
-                )
-                # The big thumbnail already has EXIF auto-rotation and any
-                # local_orientation applied, so we only resize here.
-                x.write_to_file(complete_path, Q=95)
-            return complete_path
+                source_path = big_thumbnail_path
         else:
-            x = pyvips.Image.thumbnail(
-                input_path, 10000, height=output_height, size=pyvips.enums.Size.DOWN
-            )
+            source_path = input_path
+        # ====================== Pillow Processing ======================
+        with Image.open(source_path) as img:
+            # Apply EXIF-based auto-rotation (what pyvips did automatically)
+            img = ImageOps.exif_transpose(img)
+            # Convert to RGB if necessary (required for JPEG/WebP)
+            if img.mode in ("RGBA", "P", "LA", "RGBA"):
+                img = img.convert("RGB")
+            # Resize while preserving aspect ratio (equivalent to pyvips thumbnail)
+            img.thumbnail((10000, output_height), Image.Resampling.LANCZOS)
+            # Apply additional user-specified orientation if needed
             if local_orientation and local_orientation != 1:
-                x = x.copy_memory()
-                x = _apply_local_orientation(x, local_orientation)
-            x.write_to_file(complete_path, Q=95)
-            return complete_path
+                img = _apply_local_orientation(img, local_orientation)
+            # Save with high quality
+            img.save(complete_path, quality=95, optimize=True)
+        return complete_path
     except Exception as e:
-        try:
-            util.logger.warning(f"Pyvips failed for {input_path}, trying Pillow fallback. Error: {e}")
-            with Image.open(input_path) as img:
-                aspect_ratio = img.width / img.height
-                new_width = int(output_height * aspect_ratio)
-                img.thumbnail((new_width, output_height), Image.Resampling.LANCZOS)
-                img.save(complete_path, quality=95)
-            return complete_path
-        except Exception as e_fallback:
-            util.logger.error(f"Could not create thumbnail for file {input_path} using fallback. Error: {e_fallback}")
-            raise e
+        util.logger.error(f"Could not create thumbnail for file {input_path}: {e}")
+        raise
 
 
 def create_animated_thumbnail(input_path, output_height, output_path, hash, file_type):
