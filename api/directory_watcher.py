@@ -175,6 +175,28 @@ def handle_new_image(user, path, job_id, photo=None):
                 )
             except Exception as e:
                 util.logger.error(f"job {job_id}: Failed to generate thumbnail for {path}: {e}")
+            # Calculate Aspect Ratio
+            try:
+                thumbnail._calculate_aspect_ratio()
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                util.logger.info(
+                    f"job {job_id}: calculate aspect ratio: {path}, elapsed: {elapsed}"
+                )
+            except Exception as e:
+                util.logger.warning(f"job {job_id}: Failed to calculate aspect ratio for {path} (skipping): {e}")
+            # Calculate perceptual hash for duplicate detection
+            try:
+                if thumbnail.thumbnail_big and os.path.exists(thumbnail.thumbnail_big.path):
+                    phash = calculate_hash_from_thumbnail(thumbnail.thumbnail_big.path)
+                    if phash:
+                        photo.perceptual_hash = phash
+                        photo.save(update_fields=["perceptual_hash"])
+                        elapsed = (datetime.datetime.now() - start).total_seconds()
+                        util.logger.info(
+                            f"job {job_id}: calculate perceptual hash: {path}, elapsed: {elapsed}"
+                        )
+            except Exception as e:
+                util.logger.error(f"job {job_id}: Failed to calculate perceptual hash for {path}: {e}")
             # Extract EXIF Data
             try:
                 photo._extract_exif_data(True)
@@ -213,28 +235,6 @@ def handle_new_image(user, path, job_id, photo=None):
                 )
             except Exception as e:
                 util.logger.error(f"job {job_id}: Failed to recreate search captions for {path}: {e}")
-            # Calculate Aspect Ratio
-            try:
-                thumbnail._calculate_aspect_ratio()
-                elapsed = (datetime.datetime.now() - start).total_seconds()
-                util.logger.info(
-                    f"job {job_id}: calculate aspect ratio: {path}, elapsed: {elapsed}"
-                )
-            except Exception as e:
-                util.logger.warning(f"job {job_id}: Failed to calculate aspect ratio for {path} (skipping): {e}")
-            # Calculate perceptual hash for duplicate detection
-            try:
-                if thumbnail.thumbnail_big and os.path.exists(thumbnail.thumbnail_big.path):
-                    phash = calculate_hash_from_thumbnail(thumbnail.thumbnail_big.path)
-                    if phash:
-                        photo.perceptual_hash = phash
-                        photo.save(update_fields=["perceptual_hash"])
-                        elapsed = (datetime.datetime.now() - start).total_seconds()
-                        util.logger.info(
-                            f"job {job_id}: calculate perceptual hash: {path}, elapsed: {elapsed}"
-                        )
-            except Exception as e:
-                util.logger.error(f"job {job_id}: Failed to calculate perceptual hash for {path}: {e}")
 
     except Exception as e:
         try:
