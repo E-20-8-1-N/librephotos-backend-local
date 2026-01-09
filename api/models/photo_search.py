@@ -120,45 +120,62 @@ class PhotoSearch(models.Model):
                     from transformers import PaliGemmaForConditionalGeneration, PaliGemmaProcessor
                     
                     caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
-                    caption_model = PaliGemmaForConditionalGeneration.from_pretrained(VLM_MODEL_NAME, torch_dtype=torch.bfloat16, device_map="auto").eval()
+                    caption_model = PaliGemmaForConditionalGeneration.from_pretrained(VLM_MODEL_NAME, device_map="auto").eval()
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = image_path.lower().split('.')[-1]
-                    prompt = "" # Leaving the prompt blank for pre-trained models
 
                     try:
                         if file_ext in SPECIAL_IMAGE_FILE_EXTENSIONS + RAW_IMAGE_FILE_EXTENSIONS:
                             image = self.image_format_convertor(image_path, file_ext)
-                            # Process the image
-                            inputs = caption_processor(text=prompt, images=image, return_tensors="pt").to(torch.bfloat16).to(caption_model.device)
-                            input_len = inputs["input_ids"].shape[-1]
                         else:
-                            with Image.open(image_path).convert("RGB") as imgs:
-                                inputs = caption_processor(text=prompt, images=imgs, return_tensors="pt").to(torch.bfloat16).to(caption_model.device)
-                                input_len = inputs["input_ids"].shape[-1]
-
-                        with torch.inference_mode():
-                            # Generate the caption
-                            generation = caption_model.generate(**inputs, max_new_tokens=100, do_sample=False)
-                            generation = generation[0][input_len:]
-                            # Decode the caption
-                            caption = caption_processor.decode(generation, skip_special_tokens=True)
-                            
+                            with Image.open(image_path) as img:
+                                image = img.convert("RGB")
                         
-                            util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                            search_captions += caption + " "
+                        if image is None:
+                            raise ValueError(f"Could not process image at {image_path}")
 
-                            caption_data = self.photo.caption_instance.captions_json
-                            caption_data["im2txt"] = caption
-                            self.photo.caption_instance.captions_json = caption_data
-                            self.photo.caption_instance.save()
+                        # "caption en" is the standard prompt for short English captions.
+                        prompt = "caption en"
+                        
+                        # Process inputs
+                        model_inputs = caption_processor(text=prompt, images=image, return_tensors="pt")
+                        
+                        # Calculate prompt length to trim it from the output later
+                        input_len = model_inputs["input_ids"].shape[-1]
 
-                            # Free memory
-                            del generation
-                            gc.collect()
+                        # Generate the caption
+                        # max_new_tokens=30 provides a reasonable length for a caption
+                        with torch.no_grad():
+                            generation = caption_model.generate(
+                                **model_inputs, 
+                                max_new_tokens=30, 
+                                do_sample=False
+                            )
+
+                        # CHANGED: Decode only the new tokens (slice off the prompt)
+                        generation = generation[0][input_len:]
+                        caption = caption_processor.decode(generation, skip_special_tokens=True)
+                        
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
+                        search_captions += caption + " "
+
+                        caption_data = self.photo.caption_instance.captions_json
+                        caption_data["im2txt"] = caption
+                        self.photo.caption_instance.captions_json = caption_data
+                        self.photo.caption_instance.save()
+
+                        # Free memory
+                        del generation
+                        del model_inputs
+                        del caption_model
+                        del caption_processor
+                        gc.collect()
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}")
-                        return None
+                        # Don't return None, allow the rest of the function to finish existing captions
+                        pass
+
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
