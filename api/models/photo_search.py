@@ -4,11 +4,12 @@ from django.db import models
 import api.models
 from api import util
 
+import torch
 from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-10b-ft-docci-448")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -116,41 +117,45 @@ class PhotoSearch(models.Model):
                     search_captions += im2txt_caption + " "
                 else:
                     import gc
-                    from transformers import BlipProcessor, BlipForConditionalGeneration
+                    from transformers import PaliGemmaForConditionalGeneration, PaliGemmaProcessor
                     
-                    caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
-                    caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
+                    caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
+                    caption_model = PaliGemmaForConditionalGeneration.from_pretrained(VLM_MODEL_NAME, torch_dtype=torch.bfloat16, device_map="auto").eval()
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = image_path.lower().split('.')[-1]
+                    prompt = "" # Leaving the prompt blank for pre-trained models
 
                     try:
                         if file_ext in SPECIAL_IMAGE_FILE_EXTENSIONS + RAW_IMAGE_FILE_EXTENSIONS:
                             image = self.image_format_convertor(image_path, file_ext)
                             # Process the image
-                            inputs = caption_processor(images=image, return_tensors="pt")
+                            inputs = caption_processor(text=prompt, images=image, return_tensors="pt").to(torch.bfloat16).to(caption_model.device)
+                            input_len = inputs["input_ids"].shape[-1]
                         else:
                             with Image.open(image_path).convert("RGB") as imgs:
-                                inputs = caption_processor(images=imgs, return_tensors="pt")
+                                inputs = caption_processor(text=prompt, images=imgs, return_tensors="pt").to(torch.bfloat16).to(caption_model.device)
+                                input_len = inputs["input_ids"].shape[-1]
 
-                        # Generate the caption
-                        pixel_values = inputs.pixel_values
-                        out = caption_model.generate(pixel_values=pixel_values, max_length=20, num_beams=4)
-
-                        # Decode the caption
-                        caption = caption_processor.decode(out[0], skip_special_tokens=True)
+                        with torch.inference_mode():
+                            # Generate the caption
+                            generation = caption_model.generate(**inputs, max_new_tokens=100, do_sample=False)
+                            generation = generation[0][input_len:]
+                            # Decode the caption
+                            caption = caption_processor.decode(generation, skip_special_tokens=True)
+                            
                         
-                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        search_captions += caption + " "
+                            util.logger.info(f"Generated caption for {image_path}: '{caption}'")
+                            search_captions += caption + " "
 
-                        caption_data = self.photo.caption_instance.captions_json
-                        caption_data["im2txt"] = caption
-                        self.photo.caption_instance.captions_json = caption_data
-                        self.photo.caption_instance.save()
+                            caption_data = self.photo.caption_instance.captions_json
+                            caption_data["im2txt"] = caption
+                            self.photo.caption_instance.captions_json = caption_data
+                            self.photo.caption_instance.save()
 
-                        # Free memory
-                        del out
-                        gc.collect()
+                            # Free memory
+                            del generation
+                            gc.collect()
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}")
                         return None
