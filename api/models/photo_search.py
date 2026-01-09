@@ -4,7 +4,6 @@ from django.db import models
 import api.models
 from api import util
 
-import torch
 from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
@@ -145,13 +144,11 @@ class PhotoSearch(models.Model):
                         input_len = model_inputs["input_ids"].shape[-1]
 
                         # Generate the caption
-                        # max_new_tokens=30 provides a reasonable length for a caption
-                        with torch.no_grad():
-                            generation = caption_model.generate(
-                                **model_inputs, 
-                                max_new_tokens=30, 
-                                do_sample=False
-                            )
+                        generation = caption_model.generate(
+                            **model_inputs, 
+                            max_new_tokens=30, 
+                            do_sample=False
+                        )
 
                         # CHANGED: Decode only the new tokens (slice off the prompt)
                         generation = generation[0][input_len:]
