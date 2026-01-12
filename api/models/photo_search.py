@@ -7,8 +7,11 @@ from api import util
 from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
+import gc
+import torch
+from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-pt-224")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-224")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -17,6 +20,28 @@ RAW_IMAGE_FILE_EXTENSIONS = [
   '.mef', '.orf', '.ari', '.sr2', '.kdc', '.mos', '.mfw', '.fff', '.cr3',
   '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
 ]
+
+_paligemma_model = None
+_paligemma_processor = None
+
+def get_paligemma():
+    global _paligemma_model, _paligemma_processor
+
+    if _paligemma_model is None:
+        device = "cuda" if torch.cuda.is_available() else "auto"
+        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+
+        _paligemma_processor = AutoProcessor.from_pretrained(VLM_MODEL_NAME)
+        _paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(
+            VLM_MODEL_NAME,
+            torch_dtype=dtype,
+            device_map=device,
+        ).eval()
+
+        if device == "cuda":
+            torch.cuda.empty_cache()
+
+    return _paligemma_model, _paligemma_processor
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -115,63 +140,60 @@ class PhotoSearch(models.Model):
                 if im2txt_caption:
                     search_captions += im2txt_caption + " "
                 else:
-                    import gc
-                    from transformers import PaliGemmaForConditionalGeneration, PaliGemmaProcessor
-                    
-                    caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
-                    caption_model = PaliGemmaForConditionalGeneration.from_pretrained(VLM_MODEL_NAME).eval()
-
-                    image_path = self.photo.thumbnail.thumbnail_big.path
-                    file_ext = image_path.lower().split('.')[-1]
-
                     try:
+                        model, processor = get_paligemma()
+
+                        image_path = self.photo.thumbnail.thumbnail_big.path
+                        file_ext = os.path.splitext(image_path)[1].lower()
+
+                        # Load image (reuse your existing converter)
                         if file_ext in SPECIAL_IMAGE_FILE_EXTENSIONS + RAW_IMAGE_FILE_EXTENSIONS:
                             image = self.image_format_convertor(image_path, file_ext)
+                            if image is None:
+                                raise ValueError("Failed to convert special/raw image")
                         else:
                             with Image.open(image_path) as img:
                                 image = img.convert("RGB")
-                        
-                        if image is None:
-                            raise ValueError(f"Could not process image at {image_path}")
 
-                        # "caption en" is the standard prompt for short English captions.
-                        prompt = "caption en"
-                        
-                        # Process inputs
-                        model_inputs = caption_processor(text=prompt, images=image, return_tensors="pt")
-                        
-                        # Calculate prompt length to trim it from the output later
-                        input_len = model_inputs["input_ids"].shape[-1]
+                        prompt = "caption en\n"
+                        # prompt = "Describe this image in detail.\n"
 
-                        # Generate the caption
-                        generation = caption_model.generate(
-                            **model_inputs, 
-                            max_new_tokens=30, 
-                            do_sample=False
-                        )
+                        inputs = processor(
+                            text=prompt,
+                            images=image,
+                            return_tensors="pt"
+                        ).to(model.device)
 
-                        # CHANGED: Decode only the new tokens (slice off the prompt)
-                        generation = generation[0][input_len:]
-                        caption = caption_processor.decode(generation, skip_special_tokens=True)
-                        
-                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        search_captions += caption + " "
+                        # Generate
+                        with torch.inference_mode():
+                            output = model.generate(
+                                **inputs,
+                                max_new_tokens=64,
+                                do_sample=False,
+                            )
 
-                        caption_data = self.photo.caption_instance.captions_json
+                        # Important: remove prompt tokens from output
+                        input_len = inputs["input_ids"].shape[-1]
+                        caption_tokens = output[0, input_len:]
+                        caption = processor.decode(caption_tokens, skip_special_tokens=True).strip()
+
+                        util.logger.info(f"Generated PaliGemma caption: '{caption}'")
+
+                        # Save back to captions_json
+                        caption_data = self.photo.caption_instance.captions_json or {}
                         caption_data["im2txt"] = caption
                         self.photo.caption_instance.captions_json = caption_data
                         self.photo.caption_instance.save()
 
-                        # Free memory
-                        del generation
-                        del model_inputs
-                        del caption_model
-                        del caption_processor
-                        gc.collect()
+                        search_captions += caption + " "
+
                     except Exception as e:
-                        util.logger.error(f"Failed to generate caption for {image_path}: {e}")
-                        # Don't return None, allow the rest of the function to finish existing captions
-                        pass
+                        util.logger.error(f"Failed to generate PaliGemma caption for {image_path}: {e}", exc_info=True)
+
+                    finally:
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        gc.collect()
 
 
         # Add face/person names
