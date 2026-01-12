@@ -83,7 +83,7 @@ def generate_image_caption(image_path: str, file_ext: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-224")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "Salesforce/blip-image-captioning-large")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -93,27 +93,17 @@ RAW_IMAGE_FILE_EXTENSIONS = [
   '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
 ]
 
-_paligemma_model = None
-_paligemma_processor = None
+_caption_model = None
+_caption_processor = None
 
-def get_paligemma():
-    global _paligemma_model, _paligemma_processor
+def get_model():
+    global _caption_model, _caption_processor
 
-    if _paligemma_model is None:
-        device = "cuda" if torch.cuda.is_available() else "auto"
-        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-
-        _paligemma_processor = AutoProcessor.from_pretrained(VLM_MODEL_NAME)
-        _paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(
-            VLM_MODEL_NAME,
-            torch_dtype=dtype,
-            device_map=device,
-        ).eval()
-
-        if device == "cuda":
-            torch.cuda.empty_cache()
-
-    return _paligemma_model, _paligemma_processor
+    if _caption_model is None:
+        _caption_processor = BlipProcessor.from_pretrained(VLM_MODEL_NAME)
+        _caption_model = BlipForConditionalGeneration.from_pretrained(VLM_MODEL_NAME)
+    
+    return _caption_model, _caption_processor
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
