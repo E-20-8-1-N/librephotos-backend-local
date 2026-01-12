@@ -83,7 +83,7 @@ def generate_image_caption(image_path: str, file_ext: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-pt-224")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-224")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -92,6 +92,28 @@ RAW_IMAGE_FILE_EXTENSIONS = [
   '.mef', '.orf', '.ari', '.sr2', '.kdc', '.mos', '.mfw', '.fff', '.cr3',
   '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
 ]
+
+_paligemma_model = None
+_paligemma_processor = None
+
+def get_paligemma():
+    global _paligemma_model, _paligemma_processor
+
+    if _paligemma_model is None:
+        device = "cuda" if torch.cuda.is_available() else "auto"
+        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+
+        _paligemma_processor = AutoProcessor.from_pretrained(VLM_MODEL_NAME)
+        _paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(
+            VLM_MODEL_NAME,
+            torch_dtype=dtype,
+            device_map=device,
+        ).eval()
+
+        if device == "cuda":
+            torch.cuda.empty_cache()
+
+    return _paligemma_model, _paligemma_processor
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
