@@ -134,7 +134,7 @@ class PhotoSearch(models.Model):
                         model, processor = get_model()
 
                         image_path = self.photo.thumbnail.thumbnail_big.path
-                        file_ext = os.path.splitext(image_path)[1].lower()
+                        file_ext = image_path.lower().split('.')[-1]
 
                         if file_ext in SPECIAL_IMAGE_FILE_EXTENSIONS + RAW_IMAGE_FILE_EXTENSIONS:
                             image = self.image_format_convertor(image_path, file_ext)
