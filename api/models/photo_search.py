@@ -8,7 +8,7 @@ from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-448")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-pt-224")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -119,7 +119,7 @@ class PhotoSearch(models.Model):
                     from transformers import PaliGemmaForConditionalGeneration, PaliGemmaProcessor
                     
                     caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
-                    caption_model = PaliGemmaForConditionalGeneration.from_pretrained(VLM_MODEL_NAME, device_map="auto").eval()
+                    caption_model = PaliGemmaForConditionalGeneration.from_pretrained(VLM_MODEL_NAME).eval()
 
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = image_path.lower().split('.')[-1]
