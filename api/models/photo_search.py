@@ -84,7 +84,7 @@ def generate_image_caption(image_path: str, file_ext: str):
         gc.collect()
 
 VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-448")
-HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN", "")
+HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
