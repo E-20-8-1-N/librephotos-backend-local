@@ -9,9 +9,11 @@ from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 import gc
 import torch
-from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import PaliGemmaProcessor, PaliGemmaForConditionalGeneration
+from huggingface_hub import login
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-448")
+HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN", "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")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -25,11 +27,21 @@ _caption_model = None
 _caption_processor = None
 
 def get_model():
+    """
+    Login with authentication token to download image captioning model from Hugging Face.
+    """
     global _caption_model, _caption_processor
 
-    if _caption_model is None:
-        _caption_processor = BlipProcessor.from_pretrained(VLM_MODEL_NAME)
-        _caption_model = BlipForConditionalGeneration.from_pretrained(VLM_MODEL_NAME)
+    if _caption_model is None or _caption_processor is None:
+        login(token=HF_ACCESS_TOKEN)
+
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        _caption_model = PaliGemmaForConditionalGeneration.from_pretrained(
+            VLM_MODEL_NAME,
+            dtype=dtype,
+            device_map="auto"
+        ).eval()
+        _caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
     
     return _caption_model, _caption_processor
 
@@ -70,9 +82,6 @@ class PhotoSearch(models.Model):
                 return None
         elif file_ext in ['.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']:
             try:
-                from pillow_heif import register_heif_opener
-
-                register_heif_opener()
                 with Image.open(image_path) as imgs:
                     return imgs.convert("RGB")
             except Exception as e:
@@ -143,14 +152,26 @@ class PhotoSearch(models.Model):
                                 image = img.convert("RGB")
 
                         # Process the image
-                        inputs = processor(images=image, return_tensors="pt")
+                        prompt = "<image>caption en\n"
+                        dtype = model.dtype
+                        device = model.device
+                        inputs = processor(
+                            text=prompt,
+                            images=image,
+                            return_tensors="pt"
+                        ).to(dtype).to(device)
+
+                        input_len = inputs["input_ids"].shape[-1]
 
                         # Generate the caption
-                        pixel_values = inputs.pixel_values
-                        out = model.generate(pixel_values=pixel_values, max_length=20, num_beams=4)
-
-                        # Decode the caption
-                        caption = processor.decode(out[0], skip_special_tokens=True)
+                        with torch.inference_mode():
+                            output = model.generate(
+                                **inputs,
+                                max_new_tokens=1024,
+                                do_sample=False
+                            )
+                            generation = output[0][input_len:]
+                            caption = processor.decode(generation, skip_special_tokens=True)
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         
                         # Save back to captions_json
@@ -162,11 +183,11 @@ class PhotoSearch(models.Model):
                         search_captions += caption + " "
 
                         # Free memory
-                        del out
-                        gc.collect()
+                        del output
 
                     except Exception as e:
-                        util.logger.error(f"Failed to generate PaliGemma caption for {image_path}: {e}", exc_info=True)
+                        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+                        pass
 
                     finally:
                         if torch.cuda.is_available():
