@@ -83,7 +83,8 @@ def generate_image_caption(image_path: str, file_ext: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-448")
+HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN", "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")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -97,11 +98,21 @@ _caption_model = None
 _caption_processor = None
 
 def get_model():
+    """
+    Login with authentication token to download image captioning model from Hugging Face.
+    """
     global _caption_model, _caption_processor
 
-    if _caption_model is None:
-        _caption_processor = BlipProcessor.from_pretrained(VLM_MODEL_NAME)
-        _caption_model = BlipForConditionalGeneration.from_pretrained(VLM_MODEL_NAME)
+    if _caption_model is None or _caption_processor is None:
+        login(token=HF_ACCESS_TOKEN)
+
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        _caption_model = PaliGemmaForConditionalGeneration.from_pretrained(
+            VLM_MODEL_NAME,
+            dtype=dtype,
+            device_map="auto"
+        ).eval()
+        _caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
     
     return _caption_model, _caption_processor
 
@@ -142,9 +153,6 @@ class PhotoSearch(models.Model):
                 return None
         elif file_ext in ['.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']:
             try:
-                from pillow_heif import register_heif_opener
-
-                register_heif_opener()
                 with Image.open(image_path) as imgs:
                     return imgs.convert("RGB")
             except Exception as e:
