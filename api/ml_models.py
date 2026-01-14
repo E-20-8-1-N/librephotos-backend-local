@@ -10,9 +10,18 @@ import requests
 from constance import config as site_config
 from django.conf import settings
 
+import torch
+from transformers import PaliGemmaProcessor, PaliGemmaForConditionalGeneration
+from huggingface_hub import login
+
 from api import util
 from api.models.long_running_job import LongRunningJob
 
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-448")
+HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN")
+
+_caption_model = None
+_caption_processor = None
 
 class MlTypes:
     CAPTIONING = "captioning"
@@ -197,8 +206,37 @@ def _download_file(url, target_path, model_name):
                     )
                     previous_percentage = percentage
 
+def get_caption_model():
+    """
+    Login with authentication token to download image captioning model from Hugging Face.
+    """
+    global _caption_model, _caption_processor
+
+    if _caption_model is None or _caption_processor is None:
+        login(token=HF_ACCESS_TOKEN)
+
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        _caption_model = PaliGemmaForConditionalGeneration.from_pretrained(
+            VLM_MODEL_NAME,
+            dtype=dtype,
+            device_map="auto"
+        ).eval()
+        _caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
+
+def get_caption_model_instances():
+    """
+    Returns the caption model and processor instances.
+    Ensures the model is loaded before returning.
+    """
+    global _caption_model, _caption_processor
+    
+    if _caption_model is None or _caption_processor is None:
+        get_caption_model()
+    
+    return _caption_model, _caption_processor
 
 def download_models(user):
+    get_caption_model()  # Ensure caption model is downloaded
     job_id = uuid.uuid4()
     lrj = LongRunningJob.objects.create(
         started_by=user,

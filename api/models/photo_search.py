@@ -9,11 +9,8 @@ from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 import gc
 import torch
-from transformers import PaliGemmaProcessor, PaliGemmaForConditionalGeneration
-from huggingface_hub import login
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-448")
-HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN")
+from api.ml_models import get_caption_model_instances
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -22,28 +19,6 @@ RAW_IMAGE_FILE_EXTENSIONS = [
   '.mef', '.orf', '.ari', '.sr2', '.kdc', '.mos', '.mfw', '.fff', '.cr3',
   '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
 ]
-
-_caption_model = None
-_caption_processor = None
-
-def get_model():
-    """
-    Login with authentication token to download image captioning model from Hugging Face.
-    """
-    global _caption_model, _caption_processor
-
-    if _caption_model is None or _caption_processor is None:
-        login(token=HF_ACCESS_TOKEN)
-
-        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-        _caption_model = PaliGemmaForConditionalGeneration.from_pretrained(
-            VLM_MODEL_NAME,
-            dtype=dtype,
-            device_map="auto"
-        ).eval()
-        _caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
-    
-    return _caption_model, _caption_processor
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -140,7 +115,7 @@ class PhotoSearch(models.Model):
                     search_captions += im2txt_caption + " "
                 else:
                     try:
-                        model, processor = get_model()
+                        model, processor = get_caption_model_instances()
 
                         image_path = self.photo.thumbnail.thumbnail_big.path
                         file_ext = image_path.lower().split('.')[-1]
