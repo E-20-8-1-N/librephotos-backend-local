@@ -13,7 +13,7 @@ from transformers import PaliGemmaProcessor, PaliGemmaForConditionalGeneration
 from huggingface_hub import login
 
 VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "google/paligemma2-3b-mix-448")
-HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN", "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")
+HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN", "")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
