@@ -257,18 +257,6 @@ def get_caption_model():
         ).eval()
         _caption_processor = PaliGemmaProcessor.from_pretrained(VLM_MODEL_NAME)
 
-def get_caption_model_instances():
-    """
-    Returns the caption model and processor instances.
-    Ensures the model is loaded before returning.
-    """
-    global _caption_model, _caption_processor
-    
-    if _caption_model is None or _caption_processor is None:
-        get_caption_model()
-    
-    return _caption_model, _caption_processor
-
 def download_models(user):
     lrj = LongRunningJob.create_job(
         user=user,
@@ -306,3 +294,15 @@ def do_all_models_exist():
                 if not additional_target.exists():
                     return False
     return True
+
+def get_caption_model_instances():
+    """
+    Returns the caption model and processor instances.
+    Ensures the model is loaded before returning.
+    """
+    global _caption_model, _caption_processor
+
+    if _caption_model is None or _caption_processor is None:
+        get_caption_model()
+    
+    return _caption_model, _caption_processor
