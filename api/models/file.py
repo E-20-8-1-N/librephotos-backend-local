@@ -140,7 +140,7 @@ def is_valid_media(path, user) -> bool:
     try:
         with Image.open(path) as img:
             img.verify() # Reads file header to check validity
-        return True
+            return True
     except Exception as e:
         util.logger.info(f"Could not handle {path}, because {str(e)}")
         return False
