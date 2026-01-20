@@ -83,7 +83,8 @@ def generate_image_caption(image_path: str, file_ext: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-from api.ml_models import get_caption_model_instances
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "vikhyatk/moondream2")
+VLM_MODEL_REVISION = os.getenv("VLM_MODEL_REVISION", "2025-06-21")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -92,6 +93,33 @@ RAW_IMAGE_FILE_EXTENSIONS = [
   '.mef', '.orf', '.ari', '.sr2', '.kdc', '.mos', '.mfw', '.fff', '.cr3',
   '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
 ]
+
+_model = None
+_tokenizer = None
+
+def get_model():
+    """Initialize image captioning model from Hugging Face"""
+    global _model, _tokenizer
+
+    if _model is None or _tokenizer is None:
+        util.logger.info(f"Loading image captioning model: {VLM_MODEL_NAME}@{VLM_MODEL_REVISION}")
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        _model = AutoModelForCausalLM.from_pretrained(
+            VLM_MODEL_NAME,
+            torch_dtype=dtype,
+            device_map=device,
+            trust_remote_code=True,
+            revision=VLM_MODEL_REVISION
+        )
+
+        _tokenizer = AutoTokenizer.from_pretrained(
+            VLM_MODEL_NAME,
+            revision=VLM_MODEL_REVISION
+        )
+
+    return _model, _tokenizer
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
