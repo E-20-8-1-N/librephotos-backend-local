@@ -9,8 +9,10 @@ from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 import gc
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from api.ml_models import get_caption_model_instances
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "vikhyatk/moondream2")
+VLM_MODEL_REVISION = os.getenv("VLM_MODEL_REVISION", "2025-06-21")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -19,6 +21,33 @@ RAW_IMAGE_FILE_EXTENSIONS = [
   '.mef', '.orf', '.ari', '.sr2', '.kdc', '.mos', '.mfw', '.fff', '.cr3',
   '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
 ]
+
+_model = None
+_tokenizer = None
+
+def get_model():
+    """Initialize image captioning model from Hugging Face"""
+    global _model, _tokenizer
+
+    if _model is None or _tokenizer is None:
+        util.logger.info(f"Loading image captioning model: {VLM_MODEL_NAME}@{VLM_MODEL_REVISION}")
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        _model = AutoModelForCausalLM.from_pretrained(
+            VLM_MODEL_NAME,
+            torch_dtype=dtype,
+            device_map=device,
+            trust_remote_code=True,
+            revision=VLM_MODEL_REVISION
+        )
+
+        _tokenizer = AutoTokenizer.from_pretrained(
+            VLM_MODEL_NAME,
+            revision=VLM_MODEL_REVISION
+        )
+
+    return _model, _tokenizer
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -115,7 +144,7 @@ class PhotoSearch(models.Model):
                     search_captions += im2txt_caption + " "
                 else:
                     try:
-                        model, processor = get_caption_model_instances()
+                        model, tokenizer = get_model()
 
                         image_path = self.photo.thumbnail.thumbnail_big.path
                         file_ext = image_path.lower().split('.')[-1]
@@ -127,26 +156,10 @@ class PhotoSearch(models.Model):
                                 image = img.convert("RGB")
 
                         # Process the image
-                        prompt = "<image>caption en\n"
-                        dtype = model.dtype
-                        device = model.device
-                        inputs = processor(
-                            text=prompt,
-                            images=image,
-                            return_tensors="pt"
-                        ).to(dtype).to(device)
-
-                        input_len = inputs["input_ids"].shape[-1]
-
-                        # Generate the caption
-                        with torch.inference_mode():
-                            output = model.generate(
-                                **inputs,
-                                max_new_tokens=1024,
-                                do_sample=False
-                            )
-                            generation = output[0][input_len:]
-                            caption = processor.decode(generation, skip_special_tokens=True)
+                        encode_image = model.encode_image(image)
+                        
+                        util.logger.info("Generating image caption...")
+                        caption = model.answer_question(encode_image, "Describe this image.", tokenizer=tokenizer)
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
                         
                         # Save back to captions_json
@@ -156,9 +169,6 @@ class PhotoSearch(models.Model):
                         self.photo.caption_instance.save()
 
                         search_captions += caption + " "
-
-                        # Free memory
-                        del output
 
                     except Exception as e:
                         util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
