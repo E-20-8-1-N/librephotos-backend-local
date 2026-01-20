@@ -43,8 +43,7 @@ concurrent-log-handler==0.9.29
 # Dependencies for blip
 timm==1.0.26
 # Dependencies for Moondream chat handler (llama-cpp-python multimodal)
-transformers==4.56.2
-accelerate==1.12.0
+# transformers==4.56.2
 # Dependencies for mistral quantized and multimodal models like Moondream
 llama-cpp-python==0.3.20
 argon2-cffi==25.1.0
@@ -52,6 +51,12 @@ argon2-cffi==25.1.0
 onnxruntime==1.23.2
 # SentencePiece tokenizer for SigLIP 2
 sentencepiece==0.2.1
+
+# Dependencies for Moondream2 image captioning model
+transformers==4.46.3
+einops==0.8.1
+accelerate==1.12.0
+torchvision==0.24.1
 # Dependencies for image HEIF/AVIF/SVG/RAW support
 pillow-heif==1.1.1
 cairosvg==2.8.2
