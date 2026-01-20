@@ -23,6 +23,14 @@ if [[ -n "$ADMIN_USERNAME" ]]; then
     python manage.py createadmin -u "$ADMIN_USERNAME" "$ADMIN_EMAIL" 2>&1 | tee /logs/command_createadmin.log
 fi
 
+# Use pre-downloaded captioning model in HF_HOME if it exists
+export HF_HOME="${HF_HOME:-/opt/hf_cache}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME}"
+export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-60}"
+export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-600}"
+
+mkdir -p "$HF_HOME"
+
 echo "Running backend server..."
 
 python manage.py qcluster 2>&1 | tee /logs/qcluster.log &
