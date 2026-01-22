@@ -2,7 +2,6 @@ import hashlib
 import os
 
 import magic
-import pyvips
 from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
@@ -136,24 +135,13 @@ def is_valid_media(path, user) -> bool:
         if user.skip_raw_files:
             return False
         return True
-    if ext in heif_exts:
-        util.logger.info(f"Handling HEIC/HEIF file: {path}")
+    
+    # Validation using Pillow (replacing PyVips)
     try:
-        pyvips.Image.thumbnail(path, 10000, height=200, size=pyvips.enums.Size.DOWN)
-        util.logger.info(f"pyvips successfully validated image file {path}")
-        return True
+        with Image.open(path) as img:
+            img.verify() # Reads file header to check validity
+            return True
     except Exception as e:
-        if ext in heif_exts:
-            try:
-                with Image.open(path) as img:
-                    img.verify() # Validates file integrity
-                util.logger.info(f"Pillow successfully validated HEIC file {path} (Pyvips failed)")
-                return True
-            except Exception as e_pil:
-                util.logger.warning(
-                    f"Failed to validate HEIC file {path} with both Pyvips and Pillow. Error: {e_pil}"
-                )
-                return False
         util.logger.info(f"Could not handle {path}, because {str(e)}")
         return False
 

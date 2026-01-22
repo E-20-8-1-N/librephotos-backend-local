@@ -7,8 +7,12 @@ from api import util
 from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
+import gc
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-BLIP_MODEL_NAME = os.getenv("BLIP_MODEL_NAME", "Salesforce/blip-image-captioning-large")
+VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "vikhyatk/moondream2")
+VLM_MODEL_REVISION = os.getenv("VLM_MODEL_REVISION", "2025-06-21")
 
 SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
 RAW_IMAGE_FILE_EXTENSIONS = [
@@ -17,6 +21,33 @@ RAW_IMAGE_FILE_EXTENSIONS = [
   '.mef', '.orf', '.ari', '.sr2', '.kdc', '.mos', '.mfw', '.fff', '.cr3',
   '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
 ]
+
+_model = None
+_tokenizer = None
+
+def get_model():
+    """Initialize image captioning model from Hugging Face"""
+    global _model, _tokenizer
+
+    if _model is None or _tokenizer is None:
+        util.logger.info(f"Loading image captioning model: {VLM_MODEL_NAME}@{VLM_MODEL_REVISION}")
+        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        _model = AutoModelForCausalLM.from_pretrained(
+            VLM_MODEL_NAME,
+            torch_dtype=dtype,
+            device_map=device,
+            trust_remote_code=True,
+            revision=VLM_MODEL_REVISION
+        )
+
+        _tokenizer = AutoTokenizer.from_pretrained(
+            VLM_MODEL_NAME,
+            revision=VLM_MODEL_REVISION
+        )
+
+    return _model, _tokenizer
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -55,9 +86,6 @@ class PhotoSearch(models.Model):
                 return None
         elif file_ext in ['.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']:
             try:
-                from pillow_heif import register_heif_opener
-
-                register_heif_opener()
                 with Image.open(image_path) as imgs:
                     return imgs.convert("RGB")
             except Exception as e:
@@ -115,45 +143,42 @@ class PhotoSearch(models.Model):
                 if im2txt_caption:
                     search_captions += im2txt_caption + " "
                 else:
-                    import gc
-                    from transformers import BlipProcessor, BlipForConditionalGeneration
-                    
-                    caption_processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
-                    caption_model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
-
-                    image_path = self.photo.thumbnail.thumbnail_big.path
-                    file_ext = image_path.lower().split('.')[-1]
-
                     try:
+                        model, tokenizer = get_model()
+
+                        image_path = self.photo.thumbnail.thumbnail_big.path
+                        file_ext = image_path.lower().split('.')[-1]
+
                         if file_ext in SPECIAL_IMAGE_FILE_EXTENSIONS + RAW_IMAGE_FILE_EXTENSIONS:
                             image = self.image_format_convertor(image_path, file_ext)
-                            # Process the image
-                            inputs = caption_processor(images=image, return_tensors="pt")
                         else:
-                            with Image.open(image_path).convert("RGB") as imgs:
-                                inputs = caption_processor(images=imgs, return_tensors="pt")
+                            with Image.open(image_path) as img:
+                                image = img.convert("RGB")
 
-                        # Generate the caption
-                        pixel_values = inputs.pixel_values
-                        out = caption_model.generate(pixel_values=pixel_values, max_length=20, num_beams=4)
-
-                        # Decode the caption
-                        caption = caption_processor.decode(out[0], skip_special_tokens=True)
+                        # Process the image
+                        encode_image = model.encode_image(image)
                         
+                        util.logger.info("Generating image caption...")
+                        caption = model.answer_question(encode_image, "Describe this image.", tokenizer=tokenizer)
                         util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        search_captions += caption + " "
-
+                        
+                        # Save back to captions_json
                         caption_data = self.photo.caption_instance.captions_json
                         caption_data["im2txt"] = caption
                         self.photo.caption_instance.captions_json = caption_data
                         self.photo.caption_instance.save()
 
-                        # Free memory
-                        del out
-                        gc.collect()
+                        search_captions += caption + " "
+
                     except Exception as e:
-                        util.logger.error(f"Failed to generate caption for {image_path}: {e}")
-                        return None
+                        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+                        pass
+
+                    finally:
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        gc.collect()
+
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
