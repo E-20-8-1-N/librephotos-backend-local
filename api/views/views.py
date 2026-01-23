@@ -9,6 +9,7 @@ import jsonschema
 import magic
 from constance import config as site_config
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db.models import Q, Sum
 from django.http import (
     FileResponse,
@@ -24,6 +25,7 @@ from django.views.decorators.vary import vary_on_cookie
 from django_q.tasks import AsyncTask, Chain
 from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets
+from rest_framework.authentication import BasicAuthentication
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView, exception_handler
@@ -101,6 +103,69 @@ class AlbumUserEditViewSet(viewsets.ModelViewSet):
 
 
 # API Views
+class BackendScanPhotosView(APIView):
+    """
+    Internal endpoint called by file-processor when a new file appears on disk.
+
+    Auth: service account (BasicAuth recommended) so we don't need JWT obtain.
+    It maps filesystem path '/data/pool/home/<username>/*' -> LibrePhotos user '<username>'
+    and triggers a scan for that user, so ownership is correct.
+    """
+    authentication_classes = (BasicAuthentication,)
+    permission_classes = (IsAdminUser,)
+
+    HOME_PREFIX = "/data/pool/home/"
+
+    def post(self, request, format=None):
+        return self._scan_photos(request)
+
+    @extend_schema(
+        deprecated=True,
+        description="Use POST method instead",
+    )
+    def get(self, request, format=None):
+        return self._scan_photos(request)
+
+    def _scan_photos(self, request):
+        raw_path = request.data.get("path")
+        if not raw_path or not isinstance(raw_path, str):
+            return Response({"status": False, "message": "Missing 'path' string"}, status=400)
+
+        path = os.path.normpath(raw_path)
+
+        if not path.startswith(self.HOME_PREFIX):
+            return Response(
+                {"status": False, "message": f"Path must start with {self.HOME_PREFIX}"},
+                status=400,
+            )
+        if ".." in raw_path:
+            return Response({"status": False, "message": "Invalid path"}, status=400)
+
+        rel = path[len(self.HOME_PREFIX):]
+        parts = [p for p in rel.split(os.sep) if p]
+        if not parts:
+            return Response({"status": False, "message": "Cannot derive username from path"}, status=400)
+        username = parts[0]
+
+        if not os.path.exists(path) or not os.path.isfile(path):
+            return Response({"status": False, "message": "File does not exist"}, status=404)
+
+        UserModel = get_user_model()
+        target_user = UserModel.objects.filter(username=username).first()
+        if not target_user:
+            return Response({"status": False, "message": f"User '{username}' not found"}, status=404)
+
+        expected_scan_dir = os.path.join(self.HOME_PREFIX, username)
+        if not target_user.scan_directory or target_user.scan_directory != expected_scan_dir:
+            target_user.scan_directory = expected_scan_dir
+            target_user.save(update_fields=["scan_directory"])
+
+        job_id = uuid.uuid4()
+
+        AsyncTask(scan_photos, target_user, False, job_id, target_user.scan_directory, [path]).run()
+
+        return Response({"status": True, "job_id": str(job_id), "username": username, "path": path})
+
 class SiteSettingsView(APIView):
     def get_permissions(self):
         if self.request.method == "GET":
