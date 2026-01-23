@@ -24,7 +24,7 @@ if [[ -n "$ADMIN_USERNAME" ]]; then
 fi
 
 # Use pre-downloaded captioning model in HF_HOME if it exists
-export HF_HOME="${HF_HOME:-/opt/hf_cache}"
+export HF_HOME="${HF_HOME:-/mnt/cetapod-suite/hf_cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME}"
 export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-60}"
 export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-600}"
