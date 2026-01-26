@@ -105,16 +105,25 @@ class AlbumUserEditViewSet(viewsets.ModelViewSet):
 # API Views
 class BackendScanPhotosView(APIView):
     """
-    Internal endpoint called by file-processor when a new file appears on disk.
+    No-auth endpoint. Accepts {"path": "/data/pool/home/user01/img01.jpg"}.
 
-    Auth: service account (BasicAuth recommended) so we don't need JWT obtain.
-    It maps filesystem path '/data/pool/home/<username>/*' -> LibrePhotos user '<username>'
-    and triggers a scan for that user, so ownership is correct.
+    Derives username ("user01") from path and triggers a selective scan of that file
+    for that user only.
     """
-    authentication_classes = (BasicAuthentication,)
-    permission_classes = (IsAdminUser,)
+    permission_classes = [AllowAny]
 
     HOME_PREFIX = "/data/pool/home/"
+
+    @extend_schema(
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            }
+        },
+        responses={200: dict},
+    )
 
     def post(self, request, format=None):
         return self._scan_photos(request)
@@ -127,44 +136,92 @@ class BackendScanPhotosView(APIView):
         return self._scan_photos(request)
 
     def _scan_photos(self, request):
-        raw_path = request.data.get("path")
+        raw_path = (request.data or {}).get("path")
         if not raw_path or not isinstance(raw_path, str):
-            return Response({"status": False, "message": "Missing 'path' string"}, status=400)
-
-        path = os.path.normpath(raw_path)
-
-        if not path.startswith(self.HOME_PREFIX):
             return Response(
-                {"status": False, "message": f"Path must start with {self.HOME_PREFIX}"},
+                {"status": False, "message": "Missing or invalid 'path'"},
                 status=400,
             )
-        if ".." in raw_path:
-            return Response({"status": False, "message": "Invalid path"}, status=400)
 
-        rel = path[len(self.HOME_PREFIX):]
-        parts = [p for p in rel.split(os.sep) if p]
-        if not parts:
-            return Response({"status": False, "message": "Cannot derive username from path"}, status=400)
+        # Normalize + basic traversal protection
+        abs_path = os.path.abspath(raw_path)
+
+        # Enforce fixed prefix
+        prefix = os.path.abspath(self.HOME_PREFIX) + os.sep
+        if not abs_path.startswith(prefix):
+            return Response(
+                {
+                    "status": False,
+                    "message": f"Path must be under {self.HOME_PREFIX}",
+                },
+                status=403,
+            )
+
+        if not os.path.exists(abs_path):
+            return Response(
+                {"status": False, "message": "Path does not exist"},
+                status=400,
+            )
+
+        # Extract username from /data/pool/home/<username>/...
+        rel = abs_path[len(prefix) :]
+        parts = rel.split(os.sep)
+        if not parts or not parts[0]:
+            return Response(
+                {"status": False, "message": "Could not determine username from path"},
+                status=400,
+            )
         username = parts[0]
 
-        if not os.path.exists(path) or not os.path.isfile(path):
-            return Response({"status": False, "message": "File does not exist"}, status=404)
+        User = get_user_model()
+        user = User.objects.filter(username=username).first()
+        if not user:
+            return Response(
+                {"status": False, "message": f"User '{username}' not found"},
+                status=404,
+            )
 
-        UserModel = get_user_model()
-        target_user = UserModel.objects.filter(username=username).first()
-        if not target_user:
-            return Response({"status": False, "message": f"User '{username}' not found"}, status=404)
+        # Ensure user's scan_directory matches the derived home
+        expected_scan_dir = os.path.join(os.path.abspath(self.HOME_PREFIX), username)
+        if os.path.abspath(user.scan_directory) != os.path.abspath(expected_scan_dir):
+            return Response(
+                {
+                    "status": False,
+                    "message": "User scan_directory does not match derived home directory",
+                },
+                status=403,
+            )
 
-        expected_scan_dir = os.path.join(self.HOME_PREFIX, username)
-        if not target_user.scan_directory or target_user.scan_directory != expected_scan_dir:
-            target_user.scan_directory = expected_scan_dir
-            target_user.save(update_fields=["scan_directory"])
+        # Ensure the requested file is within that user's scan directory
+        expected_scan_dir_prefix = os.path.abspath(user.scan_directory) + os.sep
+        if not abs_path.startswith(expected_scan_dir_prefix):
+            return Response(
+                {"status": False, "message": "Path is outside user's scan_directory"},
+                status=403,
+            )
 
-        job_id = uuid.uuid4()
+        try:
+            chain = Chain()
+            if not do_all_models_exist():
+                chain.append(download_models, user)
 
-        AsyncTask(scan_photos, target_user, False, job_id, target_user.scan_directory, [path]).run()
+            job_id = uuid.uuid4()
+            chain.append(scan_photos, user, False, job_id, user.scan_directory)
+            chain.run()
 
-        return Response({"status": True, "job_id": str(job_id), "username": username, "path": path})
+            return Response(
+                {
+                    "status": True,
+                    "job_id": str(job_id),
+                    "username": username,
+                    "scan_directory": user.scan_directory,
+                    "expected_scan_dir_prefix": expected_scan_dir_prefix,
+                    "path": abs_path,
+                }
+            )
+        except Exception:
+            logger.exception("Backend scan failed")
+            return Response({"status": False, "message": "Scan failed"}, status=500)
 
 class SiteSettingsView(APIView):
     def get_permissions(self):
