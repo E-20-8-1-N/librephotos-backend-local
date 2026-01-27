@@ -236,6 +236,7 @@ urlpatterns = [
     re_path(r"^api/scanphotos", views.ScanPhotosView.as_view()),
     re_path(r"^api/scanuploadedphotos", views.FullScanPhotosView.as_view()),
     re_path(r"^api/fullscanphotos", views.FullScanPhotosView.as_view()),
+    re_path(r"^api/backendscanphotos", views.BackendScanPhotosView.as_view()),
     re_path(r"^api/scanfaces", faces.ScanFacesView.as_view()),
     re_path(r"^api/deletemissingphotos", views.DeleteMissingPhotosView.as_view()),
     re_path(r"^api/autoalbumgen", album_auto.AutoAlbumGenerateView.as_view()),
