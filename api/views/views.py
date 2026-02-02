@@ -197,14 +197,6 @@ class BackendScanPhotosView(APIView):
                 status=403,
             )
 
-        # Ensure the requested file is within that user's scan directory
-        expected_scan_dir_prefix = os.path.abspath(user.scan_directory) + os.sep
-        if not abs_path.startswith(expected_scan_dir_prefix):
-            return Response(
-                {"status": False, "message": "Path is outside user's scan_directory"},
-                status=403,
-            )
-
         try:
             chain = Chain()
             if not do_all_models_exist():
@@ -220,7 +212,6 @@ class BackendScanPhotosView(APIView):
                     "job_id": str(job_id),
                     "username": username,
                     "scan_directory": user.scan_directory,
-                    "expected_scan_dir_prefix": expected_scan_dir_prefix,
                     "path": abs_path,
                 }
             )
