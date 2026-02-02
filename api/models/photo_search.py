@@ -83,43 +83,9 @@ def generate_image_caption(image_path: str, file_ext: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME", "vikhyatk/moondream2")
-VLM_MODEL_REVISION = os.getenv("VLM_MODEL_REVISION", "2025-06-21")
-
-SPECIAL_IMAGE_FILE_EXTENSIONS = ['.gif', '.apng', '.svg', '.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']
-RAW_IMAGE_FILE_EXTENSIONS = [
-  '.dng','.rwz', '.cr2', '.nrw', '.eip', '.raf', '.erf', '.rw2', '.nef',
-  '.arw', '.k25', '.srf', '.dcr', '.raw', '.crw', '.bay', '.3fr', '.cs1',
-  '.mef', '.orf', '.ari', '.sr2', '.kdc', '.mos', '.mfw', '.fff', '.cr3',
-  '.srw', '.rwl', '.j6i', '.kc2', '.x3f', '.mrw', '.iiq', '.pef', '.cxi', '.mdc'
-]
-
-_model = None
-_tokenizer = None
-
-def get_model():
-    """Initialize image captioning model from Hugging Face"""
-    global _model, _tokenizer
-
-    if _model is None or _tokenizer is None:
-        util.logger.info(f"Loading image captioning model: {VLM_MODEL_NAME}@{VLM_MODEL_REVISION}")
-        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        _model = AutoModelForCausalLM.from_pretrained(
-            VLM_MODEL_NAME,
-            torch_dtype=dtype,
-            device_map=device,
-            trust_remote_code=True,
-            revision=VLM_MODEL_REVISION
-        )
-
-        _tokenizer = AutoTokenizer.from_pretrained(
-            VLM_MODEL_NAME,
-            revision=VLM_MODEL_REVISION
-        )
-
-    return _model, _tokenizer
+CAPTION_GENERATOR_HOST = os.getenv("CAPTION_GENERATOR_HOST", "caption-generator")
+CAPTION_GENERATOR_PORT = int(os.getenv("CAPTION_GENERATOR_PORT", 8020))
+CAPTION_GENERATOR_API_ENDPOINT = os.getenv("CAPTION_GENERATOR_API_ENDPOINT", "generate")
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -141,52 +107,6 @@ class PhotoSearch(models.Model):
 
     def __str__(self):
         return f"Search data for {self.photo.image_hash}"
-    
-    def image_format_convertor(image_path, file_ext):
-        """
-        Convert image file to supporting type.
-        Returns a PIL.Image object or None if extraction fails.
-        """
-
-        if file_ext in ['.gif', '.apng']:
-            try:
-                with Image.open(image_path) as img:
-                    img.seek(1)
-                    return img.convert("RGB")
-            except Exception as e:
-                util.logger.error(f"Failed to extract frame from {file_ext} image ({image_path}): {e}")
-                return None
-        elif file_ext in ['.heic', '.tiff', '.webp', '.avif', '.ico', '.icns']:
-            try:
-                with Image.open(image_path) as imgs:
-                    return imgs.convert("RGB")
-            except Exception as e:
-                util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
-                return None
-        elif file_ext in ['.svg']:
-            try:
-                import cairosvg
-                from io import BytesIO
-
-                png_data = cairosvg.svg2png(url=image_path)
-                with Image.open(BytesIO(png_data)) as svg_img:
-                    return svg_img.convert("RGB")
-            except Exception as e:
-                util.logger.error(f"Failed to convert {file_ext} image ({image_path}): {e}")
-                return None
-        elif file_ext in RAW_IMAGE_FILE_EXTENSIONS:
-            try:
-                import rawpy
-
-                with rawpy.imread(image_path) as raw:
-                    rgb = raw.postprocess()
-                    return Image.fromarray(rgb)
-            except Exception as e:
-                util.logger.error(f"Failed to convert raw image file {file_ext} image ({image_path}): {e}")
-                return None
-        else:
-            util.logger.warning(f"Unsupported file: {image_path}")
-            return None
 
     def recreate_search_captions(self):
         """Recreate search captions from all caption sources.
