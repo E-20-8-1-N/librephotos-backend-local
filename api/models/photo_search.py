@@ -63,7 +63,7 @@ class PhotoSearch(models.Model):
                     CAPTION_GENERATOR_API_URL = f"http://{CAPTION_GENERATOR_HOST}:{CAPTION_GENERATOR_PORT}/{CAPTION_GENERATOR_API_ENDPOINT}"
                     try:
                         image_path = self.photo.thumbnail.thumbnail_big.path
-                        file_ext = image_path.lower().split('.')[-1]
+                        file_ext = str('.' + image_path.lower().split('.')[-1])
                         payload = { 
                             "file_path": image_path, 
                             "file_ext": file_ext 
