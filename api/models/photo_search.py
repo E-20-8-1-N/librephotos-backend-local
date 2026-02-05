@@ -7,10 +7,80 @@ import requests
 
 import gc
 import torch
+import time
 
 CAPTION_GENERATOR_HOST = os.getenv("CAPTION_GENERATOR_HOST", "caption-generator")
 CAPTION_GENERATOR_PORT = int(os.getenv("CAPTION_GENERATOR_PORT", 8020))
 CAPTION_GENERATOR_API_ENDPOINT = os.getenv("CAPTION_GENERATOR_API_ENDPOINT", "generate")
+CAPTION_GENERATOR_TIMEOUT_SEC = int(os.getenv("CAPTION_GENERATOR_TIMEOUT_SEC", 300))
+CAPTION_GENERATOR_RETRIES = int(os.getenv("CAPTION_GENERATOR_RETRIES", 5))
+CAPTION_GENERATOR_RETRY_BACKOFF = float(os.getenv("CAPTION_GENERATOR_RETRY_BACKOFF", 2.0))
+
+def generate_image_caption(image_path: str, file_ext: str):
+    """
+    Generates a caption by sending the image to the caption-generator via HTTP request.
+    """
+    CAPTION_GENERATOR_API_URL = f"http://{CAPTION_GENERATOR_HOST}:{CAPTION_GENERATOR_PORT}/{CAPTION_GENERATOR_API_ENDPOINT}"
+
+    try:
+        payload = { 
+            "file_path": image_path, 
+            "file_ext": file_ext 
+        }
+
+        attempts = max(CAPTION_GENERATOR_RETRIES, 0) + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                util.logger.info(
+                    "Sending caption request to %s (attempt %d/%d, timeout=%ss)",
+                    CAPTION_GENERATOR_API_URL,
+                    attempt,
+                    attempts,
+                    CAPTION_GENERATOR_TIMEOUT_SEC,
+                )
+                response = requests.post(
+                    CAPTION_GENERATOR_API_URL,
+                    json=payload,
+                    timeout=CAPTION_GENERATOR_TIMEOUT_SEC,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    caption = result.get("caption", "").strip()
+                    if caption:
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
+                        return caption
+                    util.logger.error("Caption API returned empty caption for %s", image_path)
+                elif response.status_code == 504:
+                    util.logger.warning(f"Server returned {response.status_code} (Processing) for {image_path}. Triggering retry...")
+                    raise requests.exceptions.Timeout(f"Server returned {response.status_code} Gateway Timeout")
+                else:
+                    try:
+                        err_msg = response.json()
+                    except Exception:
+                        err_msg = response.text
+                    util.logger.error(f"API Error {response.status_code}: {err_msg}")
+            except requests.exceptions.Timeout:
+                if attempt >= attempts:
+                    util.logger.error("Caption request timed out after %d attempt(s) for %s", attempts, image_path)
+                sleep_s = CAPTION_GENERATOR_RETRY_BACKOFF * (2 ** (attempt - 1))
+                util.logger.warning(
+                    "Caption request timeout for %s; retrying in %.1fs (attempt %d/%d)",
+                    image_path,
+                    sleep_s,
+                    attempt,
+                    attempts,
+                )
+                time.sleep(sleep_s)
+            except Exception as e:
+                util.logger.error(f"Failed to generate caption for {image_path}: {e}")
+    except Exception as e:
+        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+        pass
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -60,44 +130,17 @@ class PhotoSearch(models.Model):
                 if im2txt_caption:
                     search_captions += im2txt_caption + " "
                 else:
-                    CAPTION_GENERATOR_API_URL = f"http://{CAPTION_GENERATOR_HOST}:{CAPTION_GENERATOR_PORT}/{CAPTION_GENERATOR_API_ENDPOINT}"
-                    try:
-                        image_path = self.photo.thumbnail.thumbnail_big.path
-                        file_ext = str('.' + image_path.lower().split('.')[-1])
-                        payload = { 
-                            "file_path": image_path, 
-                            "file_ext": file_ext 
-                        }
-                        util.logger.info(f"Sending caption request to {CAPTION_GENERATOR_API_URL}")
-                        response = requests.post(CAPTION_GENERATOR_API_URL, json=payload, timeout=60)
-                        if response.status_code == 200:
-                            result = response.json()
-                            caption = result['caption'].strip()
-                            util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        else:
-                            try:
-                                err_msg = response.json()
-                            except:
-                                err_msg = response.text
-                            util.logger.error(f"API Error {response.status_code}: {err_msg}")
+                    image_path = self.photo.thumbnail.thumbnail_big.path
+                    file_ext = str('.' + image_path.lower().split('.')[-1])
+                    caption = generate_image_caption(image_path, file_ext)
                         
-                        # Save back to captions_json
-                        caption_data = self.photo.caption_instance.captions_json
-                        caption_data["im2txt"] = caption
-                        self.photo.caption_instance.captions_json = caption_data
-                        self.photo.caption_instance.save()
+                    # Save back to captions_json
+                    caption_data = self.photo.caption_instance.captions_json
+                    caption_data["im2txt"] = caption
+                    self.photo.caption_instance.captions_json = caption_data
+                    self.photo.caption_instance.save()
 
-                        search_captions += caption + " "
-
-                    except Exception as e:
-                        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
-                        pass
-
-                    finally:
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                        gc.collect()
-
+                    search_captions += caption + " "
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
