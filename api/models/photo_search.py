@@ -60,6 +60,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                     except Exception:
                         err_msg = response.text
                     util.logger.error(f"API Error {response.status_code}: {err_msg}")
+                    raise requests.exceptions.Timeout(f"Server returned {response.status_code}. Triggering retry...")
             except requests.exceptions.Timeout:
                 if attempt >= attempts:
                     util.logger.error("Caption request timed out after %d attempt(s) for %s", attempts, image_path)
