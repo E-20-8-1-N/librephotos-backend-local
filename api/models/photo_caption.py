@@ -288,10 +288,17 @@ class PhotoCaption(models.Model):
                 "image_path": image_path,
                 "confidence": confidence,
             }
-            res_places365 = requests.post(
+            response = requests.post(
                 f"http://{BACKEND_HOST}:8011/generate-tags", json=json_data
-            ).json()["tags"]
+            )
 
+            if response.status_code != 200:
+                util.logger.error(
+                    f"Could not generate tags for {image_path}. Status: {response.status_code}. Response: {response.text}"
+                )
+                return
+            
+            res_places365 = response.json()["tags"]
             if res_places365 is None:
                 return
             if self.captions_json is None:
