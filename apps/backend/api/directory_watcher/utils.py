@@ -47,6 +47,10 @@ def should_skip(path):
     return bool(res)
 
 
+def is_pdf(path):
+    return os.path.splitext(path)[1].lower() == ".pdf"
+
+
 if os.name == "Windows":
 
     def is_hidden(path):
@@ -84,7 +88,7 @@ def walk_directory(directory, callback):
     """
     for file in os.scandir(directory):
         fpath = os.path.join(directory, file)
-        if is_hidden(fpath) or should_skip(fpath):
+        if is_hidden(fpath) or should_skip(fpath) or is_pdf(fpath):
             continue
         if os.path.isdir(fpath):
             walk_directory(fpath, callback)
@@ -105,7 +109,7 @@ def walk_files(scan_files, callback):
         callback: List to append valid file paths to
     """
     for fpath in scan_files:
-        if os.path.isfile(fpath):
+        if os.path.isfile(fpath) and not is_pdf(fpath):
             callback.append(fpath)
 
 
