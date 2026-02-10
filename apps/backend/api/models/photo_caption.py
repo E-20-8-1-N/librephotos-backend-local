@@ -6,11 +6,85 @@ from django.db.models import Q
 
 import api.models
 from api import util
+import requests
+import gc
+import torch
+import time
 from api.image_captioning import generate_caption
 from api.llm import generate_prompt
 from api.models.user import User
 
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
+CAPTION_GENERATOR_HOST = os.getenv("CAPTION_GENERATOR_HOST", "caption-generator")
+CAPTION_GENERATOR_PORT = int(os.getenv("CAPTION_GENERATOR_PORT", 8020))
+CAPTION_GENERATOR_API_ENDPOINT = os.getenv("CAPTION_GENERATOR_API_ENDPOINT", "generate")
+CAPTION_GENERATOR_TIMEOUT_SEC = int(os.getenv("CAPTION_GENERATOR_TIMEOUT_SEC", 300))
+CAPTION_GENERATOR_RETRIES = int(os.getenv("CAPTION_GENERATOR_RETRIES", 5))
+CAPTION_GENERATOR_RETRY_BACKOFF = float(os.getenv("CAPTION_GENERATOR_RETRY_BACKOFF", 2.0))
+
+def generate_image_caption(image_path: str, file_ext: str):
+    """
+    Generates a caption by sending the image to the caption-generator via HTTP request.
+    """
+    CAPTION_GENERATOR_API_URL = f"http://{CAPTION_GENERATOR_HOST}:{CAPTION_GENERATOR_PORT}/{CAPTION_GENERATOR_API_ENDPOINT}"
+
+    try:
+        payload = {"file_path": image_path, "file_ext": file_ext}
+
+        attempts = max(CAPTION_GENERATOR_RETRIES, 0) + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                util.logger.info(
+                    "Sending caption request to %s (attempt %d/%d, timeout=%ss)",
+                    CAPTION_GENERATOR_API_URL,
+                    attempt,
+                    attempts,
+                    CAPTION_GENERATOR_TIMEOUT_SEC,
+                )
+                response = requests.post(
+                    CAPTION_GENERATOR_API_URL,
+                    json=payload,
+                    timeout=CAPTION_GENERATOR_TIMEOUT_SEC,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    caption = result.get("caption", "").strip()
+                    if caption:
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
+                        return caption
+                    util.logger.error("Caption API returned empty caption for %s", image_path)
+                elif response.status_code == 504:
+                    util.logger.warning(f"Server returned {response.status_code} (Processing) for {image_path}. Triggering retry...")
+                    raise requests.exceptions.Timeout(f"Server returned {response.status_code} Gateway Timeout")
+                else:
+                    try:
+                        err_msg = response.json()
+                    except Exception:
+                        err_msg = response.text
+                    util.logger.error(f"API Error {response.status_code}: {err_msg}")
+                    raise requests.exceptions.Timeout(f"Server returned {response.status_code}. Triggering retry...")
+            except requests.exceptions.Timeout:
+                if attempt >= attempts:
+                    util.logger.error("Caption request timed out after %d attempt(s) for %s", attempts, image_path)
+                sleep_s = CAPTION_GENERATOR_RETRY_BACKOFF * (2 ** (attempt - 1))
+                util.logger.warning(
+                    "Caption request timeout for %s; retrying in %.1fs (attempt %d/%d)",
+                    image_path,
+                    sleep_s,
+                    attempt,
+                    attempts,
+                )
+                time.sleep(sleep_s)
+            except Exception as e:
+                util.logger.error(f"Failed to generate caption for {image_path}: {e}")
+    except Exception as e:
+        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+        pass
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
 class PhotoCaption(models.Model):
     """Model for handling image captions and related functionality"""
@@ -121,38 +195,18 @@ class PhotoCaption(models.Model):
         image_path = self._resolve_thumbnail_path()
         if image_path is None:
             return False
+        file_ext = os.path.splitext(image_path)[1].lower()
 
         if self.captions_json is None:
             self.captions_json = {}
         captions = self.captions_json
 
         try:
-            from constance import config as site_config
-
-            if str(site_config.CAPTIONING_MODEL).lower() == "none":
-                util.logger.info("Generating captions is disabled")
-                return False
-
-            if site_config.CAPTIONING_MODEL == "moondream":
-                util.logger.info("Generating captions with Moondream")
-                return self._generate_captions_moondream(commit=commit)
-
-            blip = site_config.CAPTIONING_MODEL == "blip_base_capfilt_large"
-
-            caption = generate_caption(image_path=image_path, blip=blip)
-            caption = caption.replace("<start>", "").replace("<end>", "").strip()
-
-            llm_settings = User.objects.get(username=self.photo.owner).llm_settings
-            context = self._llm_caption_context(llm_settings)
-            if context is not None:
-                prompt = self._im2txt_llm_prompt(caption, context)
-                util.logger.info(prompt)
-                caption = generate_prompt(prompt)
-
+            caption = generate_image_caption(image_path, file_ext)
             self._store_generated_caption(captions, caption, commit)
 
             util.logger.info(
-                f"generated im2txt captions for image {image_path} with SiteConfig {site_config.CAPTIONING_MODEL} with Blip: {blip} caption: {caption}"
+                f"generated im2txt captions for image {image_path} with caption: {caption}"
             )
             return True
         except Exception:
