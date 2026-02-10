@@ -44,6 +44,9 @@ else:
     def is_hidden(path):
         """Check if a file is hidden (Unix version - starts with dot)."""
         return os.path.basename(path).startswith(".")
+    
+    def is_pdf(path):
+        return os.path.basename(path).endswith(".pdf")
 
 
 def walk_directory(directory, callback):
@@ -56,7 +59,7 @@ def walk_directory(directory, callback):
     """
     for file in os.scandir(directory):
         fpath = os.path.join(directory, file)
-        if not is_hidden(fpath) and not should_skip(fpath):
+        if not is_hidden(fpath) and not should_skip(fpath) and not is_pdf(fpath):
             if os.path.isdir(fpath):
                 walk_directory(fpath, callback)
             else:
@@ -72,7 +75,7 @@ def walk_files(scan_files, callback):
         callback: List to append valid file paths to
     """
     for fpath in scan_files:
-        if os.path.isfile(fpath):
+        if os.path.isfile(fpath) and not is_pdf(fpath):
             callback.append(fpath)
 
 
