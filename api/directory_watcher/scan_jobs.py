@@ -447,10 +447,10 @@ def scan_missing_photos(user, job_id: UUID):
         util.logger.exception("An error occurred: ")
         lrj.fail(error=e)
 
-    def _bulk_delete_photos(image_hashes):
-        """Helper to bulk delete Photo objects by image_hash."""
-        # Hard delete. For soft delete, iterate and set flags instead.
-        qs = Photo.objects.filter(image_hash__in=image_hashes)
-        count = qs.count()
-        qs.delete()
-        util.logger.info(f"Bulk deleted {count} Photo objects")
+def _bulk_delete_photos(image_hashes):
+    """Helper to bulk delete Photo objects by image_hash."""
+    # Hard delete. For soft delete, iterate and set flags instead.
+    qs = Photo.objects.filter(image_hash__in=image_hashes)
+    count = qs.count()
+    qs.delete()
+    util.logger.info(f"Bulk deleted {count} Photo objects")
