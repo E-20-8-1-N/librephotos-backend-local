@@ -116,7 +116,7 @@ class PhotoSearch(models.Model):
 
         # Get captions from the PhotoCaption model
         if hasattr(self.photo, "caption_instance") and self.photo.caption_instance:
-            captions_json = self.photo.caption_instance.captions_json
+            captions_json = self.photo.caption_instance.captions_json or {}
             if captions_json:
                 # Index tags from the active tagging model only
                 tagging_model = site_config.TAGGING_MODEL
@@ -126,29 +126,32 @@ class PhotoSearch(models.Model):
                     siglip2_tags = siglip2_data.get("tags", [])
                     if siglip2_tags:
                         search_captions += " ".join(siglip2_tags) + " "
-                else:
-                    places365_captions = captions_json.get("places365", {})
-                    attributes = places365_captions.get("attributes", [])
-                    search_captions += " ".join(attributes) + " "
-                    categories = places365_captions.get("categories", [])
-                    search_captions += " ".join(categories) + " "
-                    environment = places365_captions.get("environment", "")
-                    search_captions += environment + " "
 
-                user_caption = captions_json.get("user_caption", "")
-                if user_caption:
-                    search_captions += user_caption + " "
+            places365_captions = captions_json.get("places365", {})
 
-                im2txt_caption = captions_json.get("im2txt", "")
-                if im2txt_caption:
-                    search_captions += im2txt_caption + " "
-                else:
+            attributes = places365_captions.get("attributes", [])
+            search_captions += " ".join(attributes) + " "
+
+            categories = places365_captions.get("categories", [])
+            search_captions += " ".join(categories) + " "
+
+            environment = places365_captions.get("environment", "")
+            search_captions += environment + " "
+
+            user_caption = captions_json.get("user_caption", "")
+            if user_caption:
+                search_captions += user_caption + " "
+
+            im2txt_caption = captions_json.get("im2txt", "")
+            if im2txt_caption:
+                search_captions += im2txt_caption + " "
+            else:
+                if self.photo.thumbnail and self.photo.thumbnail.thumbnail_big:
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = str('.' + image_path.lower().split('.')[-1])
                     caption = generate_image_caption(image_path, file_ext)
-                        
-                    # Save back to captions_json
-                    caption_data = self.photo.caption_instance.captions_json
+
+                    caption_data = self.photo.caption_instance.captions_json or {}
                     caption_data["im2txt"] = caption
                     self.photo.caption_instance.captions_json = caption_data
                     self.photo.caption_instance.save()

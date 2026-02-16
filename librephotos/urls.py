@@ -234,7 +234,7 @@ urlpatterns = [
     re_path(r"^api/clusterfaces", dataviz.ClusterFaceView.as_view()),
     re_path(r"^api/socialgraph", dataviz.SocialGraphView.as_view()),
     re_path(r"^api/scanphotos", views.ScanPhotosView.as_view()),
-    re_path(r"^api/scanuploadedphotos", views.FullScanPhotosView.as_view()),
+    re_path(r"^api/scanuploadedphotos", views.ScanUploadedPhotosView.as_view()),
     re_path(r"^api/fullscanphotos", views.FullScanPhotosView.as_view()),
     re_path(r"^api/backendscanphotos", views.BackendScanPhotosView.as_view()),
     re_path(r"^api/scanfaces", faces.ScanFacesView.as_view()),
