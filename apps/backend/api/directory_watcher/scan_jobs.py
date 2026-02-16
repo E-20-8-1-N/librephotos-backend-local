@@ -31,6 +31,7 @@ from api.directory_watcher.processing_jobs import (
     generate_tags,
     add_geolocation,
     scan_faces,
+    generate_im2txt_captions,
 )
 from api.directory_watcher.repair_jobs import repair_ungrouped_file_variants
 from api.directory_watcher.utils import (
@@ -357,7 +358,7 @@ def _queue_scan_work(
     ).run()
 
 
-def _queue_followup_jobs(user, full_scan, scan_directory, scan_files):
+def _queue_followup_jobs(user, full_scan, scan_directory, scan_files, force_im2txt):
     """Queue the jobs that run once the scan itself has been dispatched."""
     # if the scan type is not the default user scan directory, or if it is specified as only scanning
     # specific files, there is no need to rescan fully for missing photos.
@@ -370,6 +371,8 @@ def _queue_followup_jobs(user, full_scan, scan_directory, scan_files):
 
     if settings.FEATURE_SCENE_CLASSIFICATION:
         AsyncTask(generate_tags, user, uuid.uuid4(), full_scan).run()
+    if force_im2txt and settings.FEATURE_IMAGE_CAPTIONING:
+        AsyncTask(generate_im2txt_captions, user, uuid.uuid4(), full_scan).run()
     if settings.FEATURE_REVERSE_GEOCODING:
         AsyncTask(add_geolocation, user, uuid.uuid4(), full_scan).run()
 
@@ -381,7 +384,14 @@ def _queue_followup_jobs(user, full_scan, scan_directory, scan_files):
     chain.run()
 
 
-def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=None):
+def scan_photos(
+    user,
+    full_scan,
+    job_id,
+    scan_directory="",
+    scan_files=None,
+    force_im2txt=False,
+):
     """
     Two-phase scan to avoid race conditions with RAW+JPEG grouping.
 
@@ -401,6 +411,7 @@ def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=None):
         job_id: Job ID for tracking progress
         scan_directory: Directory to scan (defaults to user's scan_directory)
         scan_files: Optional list of specific files to scan
+        force_im2txt: Whether to generate missing image captions after scanning
     """
     if scan_files is None:
         scan_files = []
@@ -476,7 +487,7 @@ def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=None):
         # Check for photos with missing aspect ratios but existing thumbnails
         backfill_missing_aspect_ratios(user)
 
-        _queue_followup_jobs(user, full_scan, scan_directory, scan_files)
+        _queue_followup_jobs(user, full_scan, scan_directory, scan_files, force_im2txt)
 
     except Exception as e:
         util.logger.exception("An error occurred: ")
