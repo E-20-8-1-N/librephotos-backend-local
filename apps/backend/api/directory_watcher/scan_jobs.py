@@ -31,6 +31,7 @@ from api.directory_watcher.processing_jobs import (
     generate_tags,
     add_geolocation,
     scan_faces,
+    generate_im2txt_captions,
 )
 from api.directory_watcher.repair_jobs import repair_ungrouped_file_variants
 from api.directory_watcher.utils import (
@@ -276,7 +277,14 @@ def backfill_missing_aspect_ratios(user):
     return still_missing
 
 
-def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=None):
+def scan_photos(
+    user,
+    full_scan,
+    job_id,
+    scan_directory="",
+    scan_files=None,
+    force_im2txt=False,
+):
     """
     Two-phase scan to avoid race conditions with RAW+JPEG grouping.
 
@@ -296,6 +304,7 @@ def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=None):
         job_id: Job ID for tracking progress
         scan_directory: Directory to scan (defaults to user's scan_directory)
         scan_files: Optional list of specific files to scan
+        force_im2txt: Whether to generate missing image captions after scanning
     """
     if scan_files is None:
         scan_files = []
@@ -441,6 +450,8 @@ def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=None):
 
         if settings.FEATURE_SCENE_CLASSIFICATION:
             AsyncTask(generate_tags, user, uuid.uuid4(), full_scan).run()
+        if force_im2txt and settings.FEATURE_IMAGE_CAPTIONING:
+            AsyncTask(generate_im2txt_captions, user, uuid.uuid4(), full_scan).run()
         if settings.FEATURE_REVERSE_GEOCODING:
             AsyncTask(add_geolocation, user, uuid.uuid4(), full_scan).run()
 
