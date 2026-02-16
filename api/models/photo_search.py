@@ -110,33 +110,33 @@ class PhotoSearch(models.Model):
 
         # Get captions from the PhotoCaption model
         if hasattr(self.photo, "caption_instance") and self.photo.caption_instance:
-            captions_json = self.photo.caption_instance.captions_json
-            if captions_json:
-                places365_captions = captions_json.get("places365", {})
+            captions_json = self.photo.caption_instance.captions_json or {}
 
-                attributes = places365_captions.get("attributes", [])
-                search_captions += " ".join(attributes) + " "
+            places365_captions = captions_json.get("places365", {})
 
-                categories = places365_captions.get("categories", [])
-                search_captions += " ".join(categories) + " "
+            attributes = places365_captions.get("attributes", [])
+            search_captions += " ".join(attributes) + " "
 
-                environment = places365_captions.get("environment", "")
-                search_captions += environment + " "
+            categories = places365_captions.get("categories", [])
+            search_captions += " ".join(categories) + " "
 
-                user_caption = captions_json.get("user_caption", "")
-                if user_caption:
-                    search_captions += user_caption + " "
+            environment = places365_captions.get("environment", "")
+            search_captions += environment + " "
 
-                im2txt_caption = captions_json.get("im2txt", "")
-                if im2txt_caption:
-                    search_captions += im2txt_caption + " "
-                else:
+            user_caption = captions_json.get("user_caption", "")
+            if user_caption:
+                search_captions += user_caption + " "
+
+            im2txt_caption = captions_json.get("im2txt", "")
+            if im2txt_caption:
+                search_captions += im2txt_caption + " "
+            else:
+                if self.photo.thumbnail and self.photo.thumbnail.thumbnail_big:
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = str('.' + image_path.lower().split('.')[-1])
                     caption = generate_image_caption(image_path, file_ext)
-                        
-                    # Save back to captions_json
-                    caption_data = self.photo.caption_instance.captions_json
+
+                    caption_data = self.photo.caption_instance.captions_json or {}
                     caption_data["im2txt"] = caption
                     self.photo.caption_instance.captions_json = caption_data
                     self.photo.caption_instance.save()

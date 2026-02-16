@@ -26,7 +26,12 @@ from api.models.file import is_metadata
 
 from api.directory_watcher.file_grouping import get_file_grouping_key
 from api.directory_watcher.file_handlers import handle_new_image, handle_file_group
-from api.directory_watcher.processing_jobs import generate_tags, add_geolocation, scan_faces
+from api.directory_watcher.processing_jobs import (
+    generate_tags,
+    add_geolocation,
+    scan_faces,
+    generate_im2txt_captions,
+)
 from api.directory_watcher.repair_jobs import repair_ungrouped_file_variants
 from api.directory_watcher.utils import (
     walk_directory,
@@ -165,7 +170,14 @@ def photo_scanner(user, last_scan, full_scan, path, job_id):
         update_scan_counter(job_id)
 
 
-def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=[]):
+def scan_photos(
+    user,
+    full_scan,
+    job_id,
+    scan_directory="",
+    scan_files=[],
+    force_im2txt=False,
+):
     """
     Two-phase scan to avoid race conditions with RAW+JPEG grouping.
     
@@ -346,6 +358,8 @@ def scan_photos(user, full_scan, job_id, scan_directory="", scan_files=[]):
         AsyncTask(repair_ungrouped_file_variants, user, uuid.uuid4()).run()
         
         AsyncTask(generate_tags, user, uuid.uuid4(), full_scan).run()
+        if force_im2txt:
+            AsyncTask(generate_im2txt_captions, user, uuid.uuid4(), full_scan).run()
         AsyncTask(add_geolocation, user, uuid.uuid4(), full_scan).run()
 
         # The scan faces job will have issues if the embeddings haven't been generated before it runs

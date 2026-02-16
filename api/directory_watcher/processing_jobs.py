@@ -136,6 +136,80 @@ def generate_tag_job(photo: Photo, job_id: str):
     update_scan_counter(job_id, failed, error)
 
 
+def generate_im2txt_captions(user, job_id: UUID, full_scan=False):
+    """
+    Generate im2txt captions for photos missing them.
+
+    Args:
+        user: The user whose photos to process
+        job_id: Job ID for tracking progress
+        full_scan: If True, process all photos; otherwise only new ones
+    """
+    lrj = LongRunningJob.get_or_create_job(
+        user=user,
+        job_type=LongRunningJob.JOB_GENERATE_IM2TXT,
+        job_id=job_id,
+    )
+
+    try:
+        last_scan = (
+            LongRunningJob.objects.filter(finished=True)
+            .filter(job_type=LongRunningJob.JOB_GENERATE_IM2TXT)
+            .filter(started_by=user)
+            .order_by("-finished_at")
+            .first()
+        )
+        existing_photos = Photo.objects.filter(
+            Q(owner=user.id)
+            & (
+                Q(caption_instance__isnull=True)
+                | Q(caption_instance__captions_json__isnull=True)
+                | Q(caption_instance__captions_json__im2txt__isnull=True)
+                | Q(caption_instance__captions_json__im2txt="")
+            )
+        )
+        if not full_scan and last_scan:
+            existing_photos = existing_photos.filter(added_on__gt=last_scan.started_at)
+
+        if existing_photos.count() == 0:
+            lrj.update_progress(current=0, target=0)
+            lrj.complete()
+            return
+        lrj.update_progress(current=0, target=existing_photos.count())
+        db.connections.close_all()
+
+        for photo in existing_photos:
+            AsyncTask(generate_im2txt_job, photo, job_id).run()
+
+    except Exception as err:
+        util.logger.exception("An error occurred: ")
+        print(f"[ERR]: {err}")
+        lrj.fail(error=err)
+
+
+def generate_im2txt_job(photo: Photo, job_id: str):
+    """
+    Worker task to generate im2txt captions for a single photo.
+
+    Args:
+        photo: The photo to process
+        job_id: Job ID for tracking progress
+    """
+    failed = False
+    error = None
+    try:
+        photo.refresh_from_db()
+        caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
+        caption_instance.recreate_search_captions()
+    except Exception as err:
+        util.logger.exception("An error occurred: %s", photo.image_hash)
+        print(f"[ERR]: {err}")
+        failed = True
+        error_msg = f"Photo {photo.image_hash}: {str(err)}\n{traceback.format_exc()}"
+        error = error_msg
+    update_scan_counter(job_id, failed, error)
+
+
 def add_geolocation(user, job_id: UUID, full_scan=False):
     """
     Add geolocation data to photos based on GPS coordinates.
