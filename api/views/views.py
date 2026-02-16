@@ -557,6 +557,39 @@ class FullScanPhotosView(APIView):
             return Response({"status": False})
 
 
+class ScanUploadedPhotosView(APIView):
+    def post(self, request, format=None):
+        return self._scan_photos(request)
+
+    @extend_schema(
+        deprecated=True,
+        description="Use POST method instead",
+    )
+    def get(self, request, format=None):
+        return self._scan_photos(request)
+
+    def _scan_photos(self, request):
+        chain = Chain()
+        if not do_all_models_exist():
+            chain.append(download_models, request.user)
+        try:
+            job_id = uuid.uuid4()
+            chain.append(
+                scan_photos,
+                request.user,
+                True,
+                job_id,
+                request.user.scan_directory,
+                [],
+                True,
+            )
+            chain.run()
+            return Response({"status": True, "job_id": job_id})
+        except BaseException:
+            logger.exception("An Error occurred")
+            return Response({"status": False})
+
+
 class DeleteMissingPhotosView(APIView):
     def post(self, request, format=None):
         return self._delete_missing_photos(request, format)
