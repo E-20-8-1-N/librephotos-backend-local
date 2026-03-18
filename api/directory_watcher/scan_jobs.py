@@ -449,9 +449,28 @@ def scan_missing_photos(user, job_id: UUID):
         lrj.fail(error=e)
 
 def _bulk_delete_photos(image_hashes):
-    """Helper to bulk delete Photo objects by image_hash."""
+    """Helper to bulk delete Photo objects by image_hash and remove associated thumbnail files."""
     # Hard delete. For soft delete, iterate and set flags instead.
     qs = Photo.objects.filter(image_hash__in=image_hashes)
     count = qs.count()
+    
+    # Delete thumbnail files from disk before deleting database records
+    thumbnail_dirs = [
+        os.path.join(settings.MEDIA_ROOT, "thumbnails_big"),
+        os.path.join(settings.MEDIA_ROOT, "square_thumbnails"),
+        os.path.join(settings.MEDIA_ROOT, "square_thumbnails_small"),
+    ]
+    
+    for photo_hash in image_hashes:
+        for thumb_dir in thumbnail_dirs:
+            for ext in [".webp", ".mp4"]:
+                thumb_path = os.path.join(thumb_dir, photo_hash + ext).strip()
+                try:
+                    if os.path.exists(thumb_path):
+                        os.remove(thumb_path)
+                        util.logger.debug(f"Deleted thumbnail file: {thumb_path}")
+                except Exception as e:
+                    util.logger.warning(f"Failed to delete thumbnail file {thumb_path}: {e}")
+    
     qs.delete()
-    util.logger.info(f"Bulk deleted {count} Photo objects")
+    util.logger.info(f"Bulk deleted {count} Photo objects and their thumbnail files")
