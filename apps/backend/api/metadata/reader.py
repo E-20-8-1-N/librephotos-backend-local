@@ -6,7 +6,8 @@ import requests
 
 from api import util
 
-EXIF_SERVICE_URL = "http://localhost:8010/get-tags"
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
+EXIF_SERVICE_URL = f"http://{BACKEND_HOST}:8010/get-tags"
 # The exif sidecar can transiently fail while a scan saturates the box —
 # returning an empty body (so ``.json()`` raises ``JSONDecodeError``), a non-2xx
 # status, or dropping the connection. Retry a few times with a short backoff
