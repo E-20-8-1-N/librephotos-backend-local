@@ -511,26 +511,6 @@ class Photo(models.Model):
                 file.save()
         self.save()
 
-    def missing_on_disk(self):
-        media_files = [
-            file
-            for file in self.files.all()
-            if file.type != File.METADATA_FILE and file.path
-        ]
-
-        if (
-            self.main_file is not None
-            and self.main_file.type != File.METADATA_FILE
-            and self.main_file.path
-            and self.main_file.pk not in {file.pk for file in media_files}
-        ):
-            media_files.append(self.main_file)
-
-        if not media_files:
-            return True
-
-        return not any(os.path.exists(file.path) for file in media_files)
-
     def manual_delete(self):
         # Store stack references before cleanup (ManyToMany)
         photo_stacks = list(self.stacks.all())
@@ -599,6 +579,21 @@ class Photo(models.Model):
 
         # To-Do: Handle wrong file permissions
         return result
+    
+    def all_file_paths(self):
+        """Return a list of all physical file paths linked to this Photo."""
+        return [f.path for f in self.files.all()]
+
+    def missing_on_disk(self):
+        """
+        Determine if the photo is missing its core file(s) on disk.
+        Returns True if none of its linked file paths exist anymore.
+        """
+        paths = self.all_file_paths()
+        if len(paths) == 0:
+            return True
+        any_exists = any(os.path.exists(p) for p in paths)
+        return not any_exists
 
     def rotate(self, angle: int = 0, flip_horizontal: bool = False) -> None:
         """Rotate the photo non-destructively.
