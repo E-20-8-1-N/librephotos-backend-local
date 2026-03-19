@@ -400,7 +400,7 @@ def scan_missing_photos(user, job_id: UUID):
         paginator = Paginator(existing_photos, 5000)
         lrj.update_progress(current=0, target=paginator.num_pages)
 
-        to_delete_hashes = []
+        to_delete_photo_ids = []
         deleted_count = 0
 
         for page in range(1, paginator.num_pages + 1):
@@ -417,60 +417,61 @@ def scan_missing_photos(user, job_id: UUID):
                 # New: Determine if photo is physically gone
                 try:
                     if existing_photo.missing_on_disk():
-                        to_delete_hashes.append(existing_photo.image_hash)
+                        to_delete_photo_ids.append(existing_photo.pk)
                 except Exception:
                     util.logger.exception(
                         f"Photo {existing_photo.image_hash} missing_on_disk check failed"
                     )
 
             # Periodically delete in batches to keep memory down.
-            if len(to_delete_hashes) >= 500:
-                _bulk_delete_photos(to_delete_hashes)
-                deleted_count += len(to_delete_hashes)
+            if len(to_delete_photo_ids) >= 500:
+                _bulk_delete_photos(to_delete_photo_ids)
+                deleted_count += len(to_delete_photo_ids)
                 util.logger.info(
-                    f"Deleted batch of {len(to_delete_hashes)} missing photos (total {deleted_count})"
+                    f"Deleted batch of {len(to_delete_photo_ids)} missing photos (total {deleted_count})"
                 )
-                to_delete_hashes = []
+                to_delete_photo_ids = []
 
             update_scan_counter(job_id)
 
         # Delete any remaining photos
-        if to_delete_hashes:
-            _bulk_delete_photos(to_delete_hashes)
-            deleted_count += len(to_delete_hashes)
+        if to_delete_photo_ids:
+            _bulk_delete_photos(to_delete_photo_ids)
+            deleted_count += len(to_delete_photo_ids)
             util.logger.info(
-                f"Deleted final batch of {len(to_delete_hashes)} missing photos (total {deleted_count})"
+                f"Deleted final batch of {len(to_delete_photo_ids)} missing photos (total {deleted_count})"
             )
 
+        lrj.complete(result={"deleted_photos": deleted_count})
         util.logger.info("Finished checking paths for missing photos")
 
     except Exception as e:
         util.logger.exception("An error occurred: ")
         lrj.fail(error=e)
 
-def _bulk_delete_photos(image_hashes):
-    """Helper to bulk delete Photo objects by image_hash and remove associated thumbnail files."""
-    # Hard delete. For soft delete, iterate and set flags instead.
-    qs = Photo.objects.filter(image_hash__in=image_hashes)
-    count = qs.count()
-    
+def _bulk_delete_photos(photo_ids):
+    """Helper to bulk delete Photo objects by primary key and remove thumbnail files."""
+    qs = Photo.objects.filter(pk__in=photo_ids)
+    image_hashes = list(qs.values_list("image_hash", flat=True))
+    count = len(image_hashes)
+
     # Delete thumbnail files from disk before deleting database records
     thumbnail_dirs = [
         os.path.join(settings.MEDIA_ROOT, "thumbnails_big"),
         os.path.join(settings.MEDIA_ROOT, "square_thumbnails"),
         os.path.join(settings.MEDIA_ROOT, "square_thumbnails_small"),
     ]
-    
-    for photo_hash in image_hashes:
+
+    for image_hash in image_hashes:
         for thumb_dir in thumbnail_dirs:
             for ext in [".webp", ".mp4"]:
-                thumb_path = os.path.join(thumb_dir, photo_hash + ext).strip()
+                thumb_path = os.path.join(thumb_dir, image_hash + ext).strip()
                 try:
                     if os.path.exists(thumb_path):
                         os.remove(thumb_path)
                         util.logger.debug(f"Deleted thumbnail file: {thumb_path}")
                 except Exception as e:
                     util.logger.warning(f"Failed to delete thumbnail file {thumb_path}: {e}")
-    
+
     qs.delete()
     util.logger.info(f"Bulk deleted {count} Photo objects and their thumbnail files")

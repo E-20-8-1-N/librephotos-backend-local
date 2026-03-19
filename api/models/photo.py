@@ -495,6 +495,26 @@ class Photo(models.Model):
                 file.save()
         self.save()
 
+    def missing_on_disk(self):
+        media_files = [
+            file
+            for file in self.files.all()
+            if file.type != File.METADATA_FILE and file.path
+        ]
+
+        if (
+            self.main_file is not None
+            and self.main_file.type != File.METADATA_FILE
+            and self.main_file.path
+            and self.main_file.pk not in {file.pk for file in media_files}
+        ):
+            media_files.append(self.main_file)
+
+        if not media_files:
+            return True
+
+        return not any(os.path.exists(file.path) for file in media_files)
+
     def manual_delete(self):
         # Store stack references before cleanup (ManyToMany)
         photo_stacks = list(self.stacks.all())
