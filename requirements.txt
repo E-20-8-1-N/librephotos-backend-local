@@ -1,4 +1,4 @@
-Django==5.2.9
+Django==5.2.11
 django-constance==4.3.4
 django-cors-headers==4.9.0
 git+https://github.com/derneuere/django-chunked-upload@master#egg=django-chunked-upload
@@ -40,7 +40,7 @@ Wand==0.6.13
 django-q2==1.9.0
 safetensors==0.6.2
 py-cpuinfo==9.0.0
-psutil==7.1.0
+psutil==7.2.2
 
 # Dependencies for blip
 timm==1.0.19
@@ -49,6 +49,10 @@ timm==1.0.19
 # Dependencies for mistral quantized and multimodal models like Moondream
 llama-cpp-python==0.3.16
 argon2-cffi==23.1.0
+# Dependencies for SigLIP 2 ONNX inference
+onnxruntime==1.21.1
+# SentencePiece tokenizer for SigLIP 2
+sentencepiece==0.2.0
 
 # Dependencies for Moondream2 image captioning model
 transformers==4.46.3

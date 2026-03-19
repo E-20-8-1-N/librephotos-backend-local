@@ -58,6 +58,11 @@ def custom_exception_handler(exc, context):
             for key, value in response.data.items():
                 error = {"field": key, "message": "".join(str(value))}
                 customized_response["errors"].append(error)
+        elif isinstance(response.data, list):
+            # Handle ValidationError raised with a string (creates a list)
+            for item in response.data:
+                error = {"field": "non_field_errors", "message": str(item)}
+                customized_response["errors"].append(error)
 
         # Add actionable guidance for unauthenticated/forbidden responses
         if getattr(response, "status_code", None) in (401, 403) and settings.DEBUG:
@@ -233,6 +238,7 @@ class SiteSettingsView(APIView):
         out["map_api_key"] = site_config.MAP_API_KEY
         out["captioning_model"] = site_config.CAPTIONING_MODEL
         out["llm_model"] = site_config.LLM_MODEL
+        out["tagging_model"] = site_config.TAGGING_MODEL
         return Response(out)
 
     def post(self, request, format=None):
@@ -251,6 +257,8 @@ class SiteSettingsView(APIView):
             site_config.CAPTIONING_MODEL = request.data["captioning_model"]
         if "llm_model" in request.data.keys():
             site_config.LLM_MODEL = request.data["llm_model"]
+        if "tagging_model" in request.data.keys():
+            site_config.TAGGING_MODEL = request.data["tagging_model"]
         if not do_all_models_exist():
             AsyncTask(download_models, User.objects.get(id=request.user.id)).run()
 
@@ -546,6 +554,39 @@ class FullScanPhotosView(APIView):
             return Response({"status": False})
 
 
+class ScanUploadedPhotosView(APIView):
+    def post(self, request, format=None):
+        return self._scan_photos(request)
+
+    @extend_schema(
+        deprecated=True,
+        description="Use POST method instead",
+    )
+    def get(self, request, format=None):
+        return self._scan_photos(request)
+
+    def _scan_photos(self, request):
+        chain = Chain()
+        if not do_all_models_exist():
+            chain.append(download_models, request.user)
+        try:
+            job_id = uuid.uuid4()
+            chain.append(
+                scan_photos,
+                request.user,
+                True,
+                job_id,
+                request.user.scan_directory,
+                [],
+                True,
+            )
+            chain.run()
+            return Response({"status": True, "job_id": job_id})
+        except BaseException:
+            logger.exception("An Error occurred")
+            return Response({"status": False})
+
+
 class DeleteMissingPhotosView(APIView):
     def post(self, request, format=None):
         return self._delete_missing_photos(request, format)
@@ -581,6 +622,18 @@ class MediaAccessView(APIView):
             photo = Photo.objects.get(image_hash=image_hash)
         except Photo.DoesNotExist:
             return HttpResponse(status=404)
+        except Photo.MultipleObjectsReturned:
+            # Multiple photos with same hash - find one that matches permissions
+            photos = Photo.objects.filter(image_hash=image_hash)
+            photo = None
+            # First try to find one that's public or in a public album
+            for p in photos:
+                if p.public or p.albumuser_set.filter(public=True).exists():
+                    photo = p
+                    break
+            # If none found, we'll check user permissions below
+            if photo is None:
+                photo = photos.first()
 
         # grant access if the requested photo is public or part of any public user album
         if photo.public or photo.albumuser_set.filter(public=True).exists():
@@ -979,10 +1032,17 @@ class UnifiedMediaAccessView(APIView):
                 token = self._get_access_token_payload(jwt)
                 if token:
                     user = User.objects.filter(id=token["user_id"]).only("id").first()
-                    if user:
-                        query = Q(owner=user)
-            photo = Photo.objects.filter(query, image_hash=fname).first()
-            if not photo or photo.main_file.embedded_media.count() < 1:
+                    query = Q(owner=user)
+            try:
+                # Check if fname is UUID format (36 chars with 4 hyphens) or image_hash
+                is_uuid_format = len(fname) == 36 and fname.count("-") == 4
+                if is_uuid_format:
+                    photo = Photo.objects.filter(query, pk=fname).first()
+                else:
+                    photo = Photo.objects.filter(query, image_hash=fname).first()
+                if not photo or photo.main_file.embedded_media.count() < 1:
+                    raise Photo.DoesNotExist()
+            except Photo.DoesNotExist:
                 return HttpResponse(status=404)
             if use_proxy:
                 response = HttpResponse()
@@ -1045,10 +1105,28 @@ class UnifiedMediaAccessView(APIView):
 
         # Non-photos (thumbnails, faces, etc.)
         if path.lower() != "photos":
+            # Try UUID lookup first (for new-style requests after migration 0099),
+            # then fall back to image_hash lookup (for legacy/backward compatibility)
+            is_uuid_format = len(image_hash) == 36 and image_hash.count("-") == 4
             try:
-                photo = Photo.objects.get(image_hash=image_hash)
+                if is_uuid_format:
+                    photo = Photo.objects.get(pk=image_hash)
+                else:
+                    photo = Photo.objects.get(image_hash=image_hash)
             except Photo.DoesNotExist:
                 return HttpResponse(status=404)
+            except Photo.MultipleObjectsReturned:
+                # Multiple photos with same hash - find one that matches permissions
+                photos = Photo.objects.filter(image_hash=image_hash)
+                photo = None
+                # First try to find one in a public album
+                for p in photos:
+                    if p.albumuser_set.filter(self._public_album_active_q()).exists():
+                        photo = p
+                        break
+                # If none found, we'll check user permissions below
+                if photo is None:
+                    photo = photos.first()
 
             if photo.albumuser_set.filter(self._public_album_active_q()).exists():
                 if use_proxy:
@@ -1077,6 +1155,18 @@ class UnifiedMediaAccessView(APIView):
             photo = Photo.objects.get(image_hash=image_hash)
         except Photo.DoesNotExist:
             return HttpResponse(status=404)
+        except Photo.MultipleObjectsReturned:
+            # Multiple photos with same hash - find one that matches permissions
+            photos = Photo.objects.filter(image_hash=image_hash)
+            photo = None
+            # First try to find one in a public album
+            for p in photos:
+                if p.albumuser_set.filter(self._public_album_active_q()).exists():
+                    photo = p
+                    break
+            # If none found, we'll check user permissions below
+            if photo is None:
+                photo = photos.first()
 
         if photo.albumuser_set.filter(self._public_album_active_q()).exists():
             if use_proxy:
@@ -1172,14 +1262,43 @@ class ZipListPhotosView_V2(APIView):
         import shutil
 
         free_storage = shutil.disk_usage("/").free
-        data = dict(request.data)
-        if "image_hashes" not in data:
-            return
+        data = request.data
+        image_hashes = data.get("image_hashes")
+        if not image_hashes:
+            return Response(data={"error": "image_hashes required"}, status=400)
+
+        # DRF may provide list values (QueryDict) or a single string
+        if isinstance(image_hashes, str):
+            image_hashes = [image_hashes]
+        elif isinstance(image_hashes, (list, tuple)):
+            # QueryDict -> dict() would produce list values, request.data keeps list too
+            pass
+        else:
+            image_hashes = list(image_hashes)
+
+        include_stacked = data.get("include_stacked_photos", False)
+        if isinstance(include_stacked, (list, tuple)):
+            include_stacked = include_stacked[0] if include_stacked else False
+        if isinstance(include_stacked, str):
+            include_stacked = include_stacked.strip().lower() in ("1", "true", "yes", "on")
+        include_stacked = bool(include_stacked)
+
         photo_query = Photo.objects.filter(owner=self.request.user)
         # Filter photos based on image hashes
-        photos = photo_query.filter(image_hash__in=data["image_hashes"])
+        photos = photo_query.filter(image_hash__in=image_hashes)
         if not photos.exists():
-            return
+            return Response(data={"error": "No photos found"}, status=404)
+
+        # Optionally expand to include all photos from the same stacks
+        if include_stacked:
+            stack_ids = (
+                photos.exclude(stacks__isnull=True)
+                .values_list("stacks__id", flat=True)
+                .distinct()
+            )
+            if stack_ids:
+                stacked_photos = photo_query.filter(stacks__id__in=stack_ids)
+                photos = (photos | stacked_photos).distinct()
 
         # Calculate the total file size using aggregate
         total_file_size = photos.aggregate(Sum("size"))["size__sum"] or 0

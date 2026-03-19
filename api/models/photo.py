@@ -1,6 +1,7 @@
 import json
 import numbers
 import os
+import uuid
 from fractions import Fraction
 from io import BytesIO
 
@@ -15,12 +16,14 @@ from django.db.utils import IntegrityError
 
 import api.models
 from api import date_time_extractor, face_extractor, util
-from api.exif_tags import Tags
 from api.geocode import GEOCODE_VERSION
 from api.geocode.geocode import reverse_geocode
+from api.metadata.reader import get_metadata
+from api.metadata.tags import Tags
+from api.metadata.writer import write_metadata
 from api.models.file import File
 from api.models.user import User, get_deleted_user
-from api.util import get_metadata, logger
+from api.util import logger
 
 
 class VisiblePhotoManager(models.Manager):
@@ -32,12 +35,19 @@ class VisiblePhotoManager(models.Manager):
                 Q(hidden=False)
                 & Q(thumbnail__aspect_ratio__isnull=False)
                 & Q(in_trashcan=False)
+                & Q(removed=False)
             )
         )
 
 
 class Photo(models.Model):
-    image_hash = models.CharField(primary_key=True, max_length=64, null=False)
+    # UUID primary key (like Immich) - enables flexible asset management
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Content hash for deduplication - unique per user
+    # Format: MD5 hash + user_id (e.g., "abc123def456...789" + "1")
+    image_hash = models.CharField(max_length=64, db_index=True)
+
     files = models.ManyToManyField(File)
     main_file = models.ForeignKey(
         File,
@@ -65,17 +75,8 @@ class Photo(models.Model):
     video = models.BooleanField(default=False)
     video_length = models.TextField(blank=True, null=True)
     size = models.BigIntegerField(default=0)
-    fstop = models.FloatField(blank=True, null=True)
-    focal_length = models.FloatField(blank=True, null=True)
-    iso = models.IntegerField(blank=True, null=True)
-    shutter_speed = models.TextField(blank=True, null=True)
-    camera = models.TextField(blank=True, null=True)
-    lens = models.TextField(blank=True, null=True)
-    width = models.IntegerField(default=0)
-    height = models.IntegerField(default=0)
-    focalLength35Equivalent = models.IntegerField(blank=True, null=True)
-    subjectDistance = models.FloatField(blank=True, null=True)
-    digitalZoomRatio = models.FloatField(blank=True, null=True)
+    # Metadata fields (camera, lens, fstop, etc.) moved to PhotoMetadata model
+    # See migration 0103_remove_photo_metadata_fields.py
 
     owner = models.ForeignKey(
         User, on_delete=models.SET(get_deleted_user), default=None
@@ -92,16 +93,33 @@ class Photo(models.Model):
     last_modified = models.DateTimeField(auto_now=True)
 
     # Perceptual hash for duplicate detection (pHash algorithm)
-    perceptual_hash = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    perceptual_hash = models.CharField(
+        max_length=64, blank=True, null=True, db_index=True
+    )
 
-    # Reference to duplicate group if this photo is part of a duplicate set
-    duplicate_group = models.ForeignKey(
-        "DuplicateGroup",
-        on_delete=models.SET_NULL,
-        null=True,
+    # Organizational photo stacks (RAW+JPEG pairs, bursts, brackets, live photos, manual)
+    # A photo can belong to multiple stacks of different types simultaneously
+    stacks = models.ManyToManyField(
+        "PhotoStack",
         blank=True,
         related_name="photos",
     )
+
+    # Duplicate groups (exact copies, visual duplicates)
+    # Separate from stacks because duplicates are about cleanup, not organization
+    duplicates = models.ManyToManyField(
+        "Duplicate",
+        blank=True,
+        related_name="photos",
+    )
+
+    # Sub-second timestamp precision for burst detection
+    # Stores the fractional seconds from EXIF:SubSecTimeOriginal
+    exif_timestamp_subsec = models.CharField(max_length=10, blank=True, null=True)
+
+    # Camera image sequence number (for burst/sequence detection)
+    # From EXIF:ImageNumber or MakerNotes
+    image_sequence_number = models.IntegerField(blank=True, null=True)
 
     objects = models.Manager()
     visible = VisiblePhotoManager()
@@ -164,17 +182,38 @@ class Photo(models.Model):
             update_fields=update_fields,
         )
 
-    def _save_metadata(self, modified_fields=None, use_sidecar=True):
+    def _save_metadata(
+        self, modified_fields=None, use_sidecar=True, metadata_types=None
+    ):
+        """Write metadata tags to the photo's file or sidecar.
+
+        Args:
+            modified_fields: List of changed field names (from Photo.save() diff).
+                When None, writes all applicable tags unconditionally.
+            use_sidecar: Write to XMP sidecar file if True, media file if False.
+            metadata_types: List of metadata categories to write, e.g.
+                ["ratings", "face_tags"]. When None, uses default behavior
+                (ratings/timestamps only, for backward compatibility).
+        """
         tags_to_write = {}
-        if modified_fields is None or "rating" in modified_fields:
-            tags_to_write[Tags.RATING] = self.rating
-        if "timestamp" in modified_fields:
-            # To-Do: Only works for files and not for the sidecar file
-            tags_to_write[Tags.DATE_TIME] = self.timestamp
+
+        write_ratings = metadata_types is None or "ratings" in metadata_types
+        write_face_tags = metadata_types is not None and "face_tags" in metadata_types
+
+        if write_ratings:
+            if modified_fields is None or "rating" in modified_fields:
+                tags_to_write[Tags.RATING] = self.rating
+            if modified_fields is not None and "timestamp" in modified_fields:
+                # To-Do: Only works for files and not for the sidecar file
+                tags_to_write[Tags.DATE_TIME] = self.timestamp
+
+        if write_face_tags:
+            from api.metadata.face_regions import get_face_region_tags
+
+            tags_to_write.update(get_face_region_tags(self))
+
         if tags_to_write:
-            util.write_metadata(
-                self.main_file.path, tags_to_write, use_sidecar=use_sidecar
-            )
+            write_metadata(self.main_file.path, tags_to_write, use_sidecar=use_sidecar)
 
     def _find_album_place(self):
         return api.models.album_place.AlbumPlace.objects.filter(
@@ -334,76 +373,6 @@ class Photo(models.Model):
         # Safe geolocation_json
         album_date.save()
 
-    def _extract_exif_data(self, commit=True):
-        (
-            size,
-            fstop,
-            focal_length,
-            iso,
-            shutter_speed,
-            camera,
-            lens,
-            width,
-            height,
-            focalLength35Equivalent,
-            subjectDistance,
-            digitalZoomRatio,
-            video_length,
-            rating,
-        ) = get_metadata(  # noqa: E501
-            self.main_file.path,
-            tags=[
-                Tags.FILE_SIZE,
-                Tags.FSTOP,
-                Tags.FOCAL_LENGTH,
-                Tags.ISO,
-                Tags.EXPOSURE_TIME,
-                Tags.CAMERA,
-                Tags.LENS,
-                Tags.IMAGE_WIDTH,
-                Tags.IMAGE_HEIGHT,
-                Tags.FOCAL_LENGTH_35MM,
-                Tags.SUBJECT_DISTANCE,
-                Tags.DIGITAL_ZOOM_RATIO,
-                Tags.QUICKTIME_DURATION,
-                Tags.RATING,
-            ],
-            try_sidecar=True,
-        )
-        if size and isinstance(size, numbers.Number):
-            self.size = size
-        if fstop and isinstance(fstop, numbers.Number):
-            self.fstop = fstop
-        if focal_length and isinstance(focal_length, numbers.Number):
-            self.focal_length = focal_length
-        if iso and isinstance(iso, numbers.Number):
-            self.iso = iso
-        if shutter_speed and isinstance(shutter_speed, numbers.Number):
-            self.shutter_speed = str(Fraction(shutter_speed).limit_denominator(1000))
-        if camera and isinstance(camera, str):
-            self.camera = camera
-        if lens and isinstance(lens, str):
-            self.lens = lens
-        if width and isinstance(width, numbers.Number):
-            self.width = width
-        if height and isinstance(height, numbers.Number):
-            self.height = height
-        if focalLength35Equivalent and isinstance(
-            focalLength35Equivalent, numbers.Number
-        ):
-            self.focalLength35Equivalent = focalLength35Equivalent
-        if subjectDistance and isinstance(subjectDistance, numbers.Number):
-            self.subjectDistance = subjectDistance
-        if digitalZoomRatio and isinstance(digitalZoomRatio, numbers.Number):
-            self.digitalZoomRatio = digitalZoomRatio
-        if video_length and isinstance(video_length, numbers.Number):
-            self.video_length = video_length
-        if rating and isinstance(rating, numbers.Number):
-            self.rating = rating
-
-        if commit:
-            self.save()
-
     def _extract_faces(self, second_try=False):
         unknown_cluster: api.models.cluster.Cluster = (
             api.models.cluster.get_unknown_cluster(user=self.owner)
@@ -527,59 +496,73 @@ class Photo(models.Model):
         self.save()
 
     def manual_delete(self):
-        # Store duplicate_group reference before cleanup
-        dup_group = self.duplicate_group
-        
+        # Store stack references before cleanup (ManyToMany)
+        photo_stacks = list(self.stacks.all())
+
+        # Store duplicate group references before cleanup (ManyToMany)
+        photo_duplicates = list(self.duplicates.all())
+
+        # Handle file cleanup - only delete files not shared with other Photos
         for file in self.files.all():
-            if os.path.isfile(file.path):
-                logger.info(f"Removing photo {file.path}")
-                os.remove(file.path)
+            # Check if this file is used by other Photos (via files M2M or as main_file)
+            other_photos_using_file = (
+                file.photo_set.exclude(pk=self.pk).exists()
+                or file.main_photo.exclude(pk=self.pk).exists()
+            )
+
+            if other_photos_using_file:
+                # File is shared - just unlink from this photo, don't delete
+                logger.info(
+                    f"File {file.path} is shared with other photos, unlinking only"
+                )
+                self.files.remove(file)
+            else:
+                # File is only used by this photo - safe to delete
+                if os.path.isfile(file.path):
+                    logger.info(f"Removing photo {file.path}")
+                    os.remove(file.path)
                 file.delete()
-            self.files.set([])
-            self.main_file = None
+
+        self.files.set([])
+        self.main_file = None
         self.removed = True
-        
-        # Clear duplicate_group reference from this photo
-        self.duplicate_group = None
+
+        # Clear all stack references from this photo (ManyToMany)
+        self.stacks.clear()
+
+        # Clear all duplicate group references from this photo (ManyToMany)
+        self.duplicates.clear()
+
         result = self.save()
-        
-        # Clean up duplicate group if it's now empty or has only one photo left
-        if dup_group:
-            remaining_photos = dup_group.photos.filter(removed=False).count()
+
+        # Clean up stacks if they're now empty or have only one photo left
+        for photo_stack in photo_stacks:
+            remaining_photos = photo_stack.photos.filter(removed=False).count()
             if remaining_photos <= 1:
-                # If 0 or 1 photos left, delete the group (no longer a duplicate set)
-                logger.info(f"Deleting duplicate group {dup_group.id} - only {remaining_photos} photos remaining")
-                # Unlink remaining photo from group first
-                dup_group.photos.update(duplicate_group=None)
-                dup_group.delete()
-            elif dup_group.status == "reviewed":
-                # If reviewed group loses a photo, reset to pending for re-review
-                logger.info(f"Resetting duplicate group {dup_group.id} to pending - photo was permanently deleted")
-                dup_group.status = "pending"
-                dup_group.preferred_photo = None
-                dup_group.save()
-        
+                # If 0 or 1 photos left, delete the stack (no longer a valid grouping)
+                logger.info(
+                    f"Deleting photo stack {photo_stack.id} - only {remaining_photos} photos remaining"
+                )
+                # Unlink remaining photos from stack first
+                for remaining_photo in photo_stack.photos.all():
+                    remaining_photo.stacks.remove(photo_stack)
+                photo_stack.delete()
+
+        # Clean up duplicate groups if they're now empty or have only one photo left
+        for duplicate in photo_duplicates:
+            remaining_photos = duplicate.photos.filter(removed=False).count()
+            if remaining_photos <= 1:
+                # If 0 or 1 photos left, delete the duplicate group (no longer valid)
+                logger.info(
+                    f"Deleting duplicate group {duplicate.id} - only {remaining_photos} photos remaining"
+                )
+                # Unlink remaining photos from duplicate first
+                for remaining_photo in duplicate.photos.all():
+                    remaining_photo.duplicates.remove(duplicate)
+                duplicate.delete()
+
         # To-Do: Handle wrong file permissions
         return result
-
-    def delete_duplicate(self, duplicate_path):
-        # To-Do: Handle wrong file permissions
-        for file in self.files.all():
-            if file.path == duplicate_path:
-                if not os.path.isfile(duplicate_path):
-                    logger.info(f"Path does not lead to a valid file: {duplicate_path}")
-                    self.files.remove(file)
-                    file.delete()
-                    self.save()
-                    return False
-                logger.info(f"Removing photo {duplicate_path}")
-                os.remove(duplicate_path)
-                self.files.remove(file)
-                self.save()
-                file.delete()
-                return True
-        logger.info(f"Path is not valid: {duplicate_path}")
-        return False
     
     def all_file_paths(self):
         """Return a list of all physical file paths linked to this Photo."""

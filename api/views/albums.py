@@ -18,6 +18,7 @@ from api.models import (
     Photo,
     User,
 )
+from api.models.photo_stack import PhotoStack
 from api.serializers.album_date import (
     AlbumDateSerializer,
     IncompleteAlbumDateSerializer,
@@ -124,9 +125,20 @@ class PersonViewSet(viewsets.ModelViewSet):
                 "cover_face",
                 "cover_photo",
             )
+            .order_by("name")
         )
 
         return qs
+
+
+def _get_active_tag_thing_types():
+    """Return the AlbumThing thing_type values for the active tagging model."""
+    from constance import config as site_config
+
+    tagging_model = site_config.TAGGING_MODEL
+    if tagging_model == "siglip2":
+        return ["siglip2_tag"]
+    return ["places365_attribute", "places365_category"]
 
 
 class AlbumThingViewSet(viewsets.ModelViewSet):
@@ -136,9 +148,11 @@ class AlbumThingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if self.request.user.is_anonymous:
             return AlbumThing.objects.none()
+        active_types = _get_active_tag_thing_types()
         return (
             AlbumThing.objects.filter(Q(owner=self.request.user))
             .filter(Q(photo_count__gt=0))
+            .filter(Q(thing_type__in=active_types) | Q(thing_type="hashtag_attribute"))
             .prefetch_related(
                 Prefetch(
                     "photos",
@@ -151,6 +165,7 @@ class AlbumThingViewSet(viewsets.ModelViewSet):
                     ),
                 ),
             )
+            .order_by("title")
         )
 
     def retrieve(self, *args, **kwargs):
@@ -181,10 +196,12 @@ class AlbumThingListViewSet(ListViewSet):
         if self.request.user.is_anonymous:
             return AlbumThing.objects.none()
 
+        active_types = _get_active_tag_thing_types()
         queryset = (
             AlbumThing.objects.filter(owner=self.request.user)
             .prefetch_related("cover_photos")
             .filter(photo_count__gt=0)
+            .filter(Q(thing_type__in=active_types) | Q(thing_type="hashtag_attribute"))
             .order_by("-title")
         )
 
@@ -213,6 +230,7 @@ class AlbumPlaceViewSet(viewsets.ModelViewSet):
                     .order_by("-exif_timestamp"),
                 )
             )
+            .order_by("title")
         )
 
     def retrieve(self, *args, **kwargs):
@@ -370,6 +388,18 @@ class AlbumDateViewSet(viewsets.ModelViewSet):
         else:
             photo_filter.append(Q(in_trashcan=False))
 
+        # Stack filtering: Show photos that are either:
+        # 1. Not in any stack, OR
+        # 2. The primary photo of their stack
+        # Stacks are for organizational purposes (RAW+JPEG pairs, bursts, brackets, live photos, manual)
+        # Non-primary photos are hidden in the timeline but accessible via stack expansion
+        # NOTE: Duplicates are handled separately via the Duplicate model and are not filtered here
+        if not self.request.query_params.get("show_all_stack_photos"):
+            photo_filter.append(
+                Q(stacks__isnull=True) |
+                Q(primary_in_stack__isnull=False)
+            )
+
         if self.request.query_params.get("person"):
             photo_filter.append(
                 Q(faces__person__id=self.request.query_params.get("person"))
@@ -382,6 +412,19 @@ class AlbumDateViewSet(viewsets.ModelViewSet):
             )
 
         album_date = AlbumDate.objects.filter(id=self.kwargs["pk"]).first()
+
+        # Build a prefetch for stacks that filters to valid types and annotates
+        # photo_count, avoiding N+1 queries in the serializer
+        valid_stack_types = PhotoStack.VALID_STACK_TYPES + [
+            PhotoStack.StackType.RAW_JPEG_PAIR,
+            PhotoStack.StackType.LIVE_PHOTO,
+        ]
+        stacks_prefetch = Prefetch(
+            "stacks",
+            queryset=PhotoStack.objects.filter(
+                stack_type__in=valid_stack_types
+            ).annotate(photo_count_annotation=Count("photos")),
+        )
 
         photo_qs = (
             album_date.photos.filter(*photo_filter)
@@ -396,8 +439,11 @@ class AlbumDateViewSet(viewsets.ModelViewSet):
                     "main_file__embedded_media",
                     queryset=File.objects.only("hash"),
                 ),
+                stacks_prefetch,
+                "files",  # Prefetch files for get_has_raw_variant()
             )
             .select_related("thumbnail", "search_instance", "main_file")
+            .distinct()  # Remove duplicates that can occur when filtering through reverse ForeignKey relationships (e.g., faces__person__id)
             .order_by("-exif_timestamp")
             .only(
                 "image_hash",
@@ -488,6 +534,18 @@ class AlbumDateListViewSet(ListViewSet):
             filter.append(Q(photos__in_trashcan=True) & Q(photos__removed=False))
         else:
             filter.append(Q(photos__in_trashcan=False))
+
+        # Stack filtering: Only count photos that are either:
+        # 1. Not in any stack, OR
+        # 2. The primary photo of their stack
+        # Stacks are for organizational purposes (RAW+JPEG pairs, bursts, brackets, live photos, manual)
+        # Non-primary photos are hidden in the timeline but accessible via stack expansion
+        # NOTE: Duplicates are handled separately via the Duplicate model and are not filtered here
+        if not self.request.query_params.get("show_all_stack_photos"):
+            filter.append(
+                Q(photos__stacks__isnull=True) |
+                Q(photos__primary_in_stack__isnull=False)
+            )
 
         # Filter by folder path if provided
         if self.request.query_params.get("folder"):

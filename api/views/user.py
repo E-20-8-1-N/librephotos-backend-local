@@ -6,6 +6,10 @@ from rest_framework.views import APIView
 
 from api.api_util import path_to_dict
 from api.date_time_extractor import DEFAULT_RULES_JSON, PREDEFINED_RULES_JSON
+from api.burst_detection_rules import (
+    DEFAULT_RULES_JSON as BURST_DEFAULT_RULES_JSON,
+    PREDEFINED_RULES_JSON as BURST_PREDEFINED_RULES_JSON,
+)
 from api.models import User
 from api.permissions import IsAdminOrFirstTimeSetupOrRegistrationAllowed, IsAdminOrSelf
 from api.serializers.user import (
@@ -27,6 +31,20 @@ class DefaultRulesView(APIView):
 class PredefinedRulesView(APIView):
     def get(self, request, format=None):
         res = PREDEFINED_RULES_JSON
+        return Response(res)
+
+
+class DefaultBurstRulesView(APIView):
+    """Get default burst detection rules."""
+    def get(self, request, format=None):
+        res = BURST_DEFAULT_RULES_JSON
+        return Response(res)
+
+
+class PredefinedBurstRulesView(APIView):
+    """Get all predefined burst detection rules (default + optional)."""
+    def get(self, request, format=None):
+        res = BURST_PREDEFINED_RULES_JSON
         return Response(res)
 
 
@@ -103,7 +121,9 @@ class UserViewSet(viewsets.ModelViewSet):
         return queryset
 
     def get_serializer_class(self):
-        if not self.request.user.is_authenticated and self.action == "create":
+        if self.action == "create":
+            if self.request.user.is_authenticated and self.request.user.is_superuser:
+                return UserSerializer
             return SignupUserSerializer
         if not self.request.user.is_authenticated:
             return PublicUserSerializer

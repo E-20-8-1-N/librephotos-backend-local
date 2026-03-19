@@ -60,10 +60,18 @@ class UserTest(TestCase):
         "min_cluster_size",
         "confidence_unknown_face",
         "min_samples",
+        "burst_detection_rules",
+        "skip_raw_files",
+        "stack_raw_jpeg",
+        "slideshow_interval",
+        "duplicate_sensitivity",
+        "duplicate_clear_existing",
         "cluster_selection_epsilon",
         "llm_settings",
         "text_alignment",
         "header_size",
+        "save_face_tags_to_disk",
+        "public_sharing_defaults",
     ]
 
     def setUp(self):
@@ -188,6 +196,17 @@ class UserTest(TestCase):
         self.assertEqual(201, response.status_code)
         user = User.objects.get(username=data["username"])
         self.assertEqual(False, user.is_superuser)
+
+    @override_config(ALLOW_REGISTRATION=True)
+    def test_authenticated_user_cannot_create_superuser(self):
+        """Authenticated non-admin users must not be able to create superuser accounts."""
+        self.client.force_authenticate(user=self.user1)
+        data = create_user_details(is_admin=True)
+        response = self.client.post("/api/user/", data=data)
+        self.assertEqual(201, response.status_code)
+        user = User.objects.get(username=data["username"])
+        self.assertFalse(user.is_superuser)
+        self.assertFalse(user.is_staff)
 
     def test_user_update_another_user(self):
         self.client.force_authenticate(user=self.user1)

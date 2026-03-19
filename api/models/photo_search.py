@@ -60,6 +60,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                     except Exception:
                         err_msg = response.text
                     util.logger.error(f"API Error {response.status_code}: {err_msg}")
+                    raise requests.exceptions.Timeout(f"Server returned {response.status_code}. Triggering retry...")
             except requests.exceptions.Timeout:
                 if attempt >= attempts:
                     util.logger.error("Caption request timed out after %d attempt(s) for %s", attempts, image_path)
@@ -104,38 +105,53 @@ class PhotoSearch(models.Model):
         return f"Search data for {self.photo.image_hash}"
 
     def recreate_search_captions(self):
-        """Recreate search captions from all caption sources"""
+        """Recreate search captions from all caption sources.
+
+        Only tags from the active TAGGING_MODEL are indexed into search_captions.
+        This allows instant switching of tag visibility without re-inference.
+        """
+        from constance import config as site_config
+
         search_captions = ""
 
         # Get captions from the PhotoCaption model
         if hasattr(self.photo, "caption_instance") and self.photo.caption_instance:
-            captions_json = self.photo.caption_instance.captions_json
+            captions_json = self.photo.caption_instance.captions_json or {}
             if captions_json:
-                places365_captions = captions_json.get("places365", {})
+                # Index tags from the active tagging model only
+                tagging_model = site_config.TAGGING_MODEL
 
-                attributes = places365_captions.get("attributes", [])
-                search_captions += " ".join(attributes) + " "
+                if tagging_model == "siglip2":
+                    siglip2_data = captions_json.get("siglip2", {})
+                    siglip2_tags = siglip2_data.get("tags", [])
+                    if siglip2_tags:
+                        search_captions += " ".join(siglip2_tags) + " "
 
-                categories = places365_captions.get("categories", [])
-                search_captions += " ".join(categories) + " "
+            places365_captions = captions_json.get("places365", {})
 
-                environment = places365_captions.get("environment", "")
-                search_captions += environment + " "
+            attributes = places365_captions.get("attributes", [])
+            search_captions += " ".join(attributes) + " "
 
-                user_caption = captions_json.get("user_caption", "")
-                if user_caption:
-                    search_captions += user_caption + " "
+            categories = places365_captions.get("categories", [])
+            search_captions += " ".join(categories) + " "
 
-                im2txt_caption = captions_json.get("im2txt", "")
-                if im2txt_caption:
-                    search_captions += im2txt_caption + " "
-                else:
+            environment = places365_captions.get("environment", "")
+            search_captions += environment + " "
+
+            user_caption = captions_json.get("user_caption", "")
+            if user_caption:
+                search_captions += user_caption + " "
+
+            im2txt_caption = captions_json.get("im2txt", "")
+            if im2txt_caption:
+                search_captions += im2txt_caption + " "
+            else:
+                if self.photo.thumbnail and self.photo.thumbnail.thumbnail_big:
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = str('.' + image_path.lower().split('.')[-1])
                     caption = generate_image_caption(image_path, file_ext)
-                        
-                    # Save back to captions_json
-                    caption_data = self.photo.caption_instance.captions_json
+
+                    caption_data = self.photo.caption_instance.captions_json or {}
                     caption_data["im2txt"] = caption
                     self.photo.caption_instance.captions_json = caption_data
                     self.photo.caption_instance.save()
@@ -148,6 +164,8 @@ class PhotoSearch(models.Model):
                 search_captions += face.person.name + " "
 
         # Add file paths
+        if self.photo.main_file:
+            search_captions += self.photo.main_file.path + " "
         for file in self.photo.files.all():
             search_captions += file.path + " "
 
@@ -155,12 +173,16 @@ class PhotoSearch(models.Model):
         if self.photo.video:
             search_captions += "type: video "
 
-        # Add camera and lens info
-        if self.photo.camera:
-            search_captions += self.photo.camera + " "
-
-        if self.photo.lens:
-            search_captions += self.photo.lens + " "
+        # Add camera and lens info from PhotoMetadata
+        try:
+            metadata = self.photo.metadata
+            if metadata.camera_display:
+                search_captions += metadata.camera_display + " "
+            if metadata.lens_display:
+                search_captions += metadata.lens_display + " "
+        except Exception:
+            # PhotoMetadata may not exist yet
+            pass
 
         self.search_captions = search_captions.strip()
 

@@ -3,9 +3,10 @@ import PIL
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 
-from api.exif_tags import Tags
 from api.face_recognition import get_face_locations
-from api.util import get_metadata, is_number, logger
+from api.metadata.reader import get_metadata
+from api.metadata.tags import Tags
+from api.util import is_number, logger
 
 
 class RuleTypes:
@@ -105,6 +106,7 @@ def extract_from_dlib(image_path, big_thumbnail_path, owner):
     except Exception as e:
         logger.info(f"Can't extract face information on photo: {image_path}")
         logger.info(e)
+        face_locations = []
 
     for i, face_location in enumerate(face_locations):
         face_locations[i] = (*face_location, None)

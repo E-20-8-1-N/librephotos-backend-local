@@ -5,7 +5,8 @@ from PIL import Image
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
 
-from api.exif_tags import Tags
+from api.metadata.reader import get_metadata
+from api.metadata.tags import Tags
 from api.models.photo import Photo
 from api.thumbnails import (
     create_animated_thumbnail,
@@ -14,7 +15,7 @@ from api.thumbnails import (
     does_static_thumbnail_exist,
     does_video_thumbnail_exist,
 )
-from api.util import get_metadata, logger
+from api.util import logger
 
 
 class Thumbnail(models.Model):
@@ -29,76 +30,78 @@ class Thumbnail(models.Model):
 
     def _generate_thumbnail(self):
         try:
-            if not does_static_thumbnail_exist("thumbnails_big", self.photo.image_hash):
+            # Use photo.image_hash for thumbnail paths for frontend compatibility
+            photo_hash = self.photo.image_hash
+            if not does_static_thumbnail_exist("thumbnails_big", photo_hash):
                 if not self.photo.video:
                     create_thumbnail(
                         input_path=self.photo.main_file.path,
                         output_height=1080,
                         output_path="thumbnails_big",
-                        hash=self.photo.image_hash,
+                        hash=photo_hash,
                         file_type=".webp",
                     )
                 else:
                     create_thumbnail_for_video(
                         input_path=self.photo.main_file.path,
                         output_path="thumbnails_big",
-                        hash=self.photo.image_hash,
+                        hash=photo_hash,
                         file_type=".webp",
                     )
 
             if not self.photo.video and not does_static_thumbnail_exist(
-                "square_thumbnails", self.photo.image_hash
+                "square_thumbnails", photo_hash
             ):
                 create_thumbnail(
                     input_path=self.photo.main_file.path,
                     output_height=500,
                     output_path="square_thumbnails",
-                    hash=self.photo.image_hash,
+                    hash=photo_hash,
                     file_type=".webp",
                 )
             if self.photo.video and not does_video_thumbnail_exist(
-                "square_thumbnails", self.photo.image_hash
+                "square_thumbnails", photo_hash
             ):
                 create_animated_thumbnail(
                     input_path=self.photo.main_file.path,
                     output_height=500,
                     output_path="square_thumbnails",
-                    hash=self.photo.image_hash,
+                    hash=photo_hash,
                     file_type=".mp4",
                 )
 
             if not self.photo.video and not does_static_thumbnail_exist(
-                "square_thumbnails_small", self.photo.image_hash
+                "square_thumbnails_small", photo_hash
             ):
                 create_thumbnail(
                     input_path=self.photo.main_file.path,
                     output_height=250,
                     output_path="square_thumbnails_small",
-                    hash=self.photo.image_hash,
+                    hash=photo_hash,
                     file_type=".webp",
                 )
             if self.photo.video and not does_video_thumbnail_exist(
-                "square_thumbnails_small", self.photo.image_hash
+                "square_thumbnails_small", photo_hash
             ):
                 create_animated_thumbnail(
                     input_path=self.photo.main_file.path,
                     output_height=250,
                     output_path="square_thumbnails_small",
-                    hash=self.photo.image_hash,
+                    hash=photo_hash,
                     file_type=".mp4",
                 )
             filetype = ".webp"
             if self.photo.video:
                 filetype = ".mp4"
             self.thumbnail_big.name = os.path.join(
-                "thumbnails_big", self.photo.image_hash + ".webp"
-            ).strip()
+                "thumbnails_big", photo_hash + ".webp"
+            )
             self.square_thumbnail.name = os.path.join(
-                "square_thumbnails", self.photo.image_hash + filetype
-            ).strip()
+                "square_thumbnails", photo_hash + filetype
+            )
             self.square_thumbnail_small.name = os.path.join(
-                "square_thumbnails_small", self.photo.image_hash + filetype
-            ).strip()
+                "square_thumbnails_small", photo_hash + filetype
+            )
             self.save()
         except Exception as e:
             logger.exception(

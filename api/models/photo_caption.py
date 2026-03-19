@@ -4,12 +4,89 @@ from django.db.models import Q
 
 import api.models
 from api import util
+import requests
+import gc
+import torch
+import time
 from api.image_captioning import generate_caption
 from api.llm import generate_prompt
 from api.models.user import User
 
 # --- Configuration (from Environment Variables) ---
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
+CAPTION_GENERATOR_HOST = os.getenv("CAPTION_GENERATOR_HOST", "caption-generator")
+CAPTION_GENERATOR_PORT = int(os.getenv("CAPTION_GENERATOR_PORT", 8020))
+CAPTION_GENERATOR_API_ENDPOINT = os.getenv("CAPTION_GENERATOR_API_ENDPOINT", "generate")
+CAPTION_GENERATOR_TIMEOUT_SEC = int(os.getenv("CAPTION_GENERATOR_TIMEOUT_SEC", 300))
+CAPTION_GENERATOR_RETRIES = int(os.getenv("CAPTION_GENERATOR_RETRIES", 5))
+CAPTION_GENERATOR_RETRY_BACKOFF = float(os.getenv("CAPTION_GENERATOR_RETRY_BACKOFF", 2.0))
+
+def generate_image_caption(image_path: str, file_ext: str):
+    """
+    Generates a caption by sending the image to the caption-generator via HTTP request.
+    """
+    CAPTION_GENERATOR_API_URL = f"http://{CAPTION_GENERATOR_HOST}:{CAPTION_GENERATOR_PORT}/{CAPTION_GENERATOR_API_ENDPOINT}"
+
+    try:
+        payload = { 
+            "file_path": image_path, 
+            "file_ext": file_ext 
+        }
+
+        attempts = max(CAPTION_GENERATOR_RETRIES, 0) + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                util.logger.info(
+                    "Sending caption request to %s (attempt %d/%d, timeout=%ss)",
+                    CAPTION_GENERATOR_API_URL,
+                    attempt,
+                    attempts,
+                    CAPTION_GENERATOR_TIMEOUT_SEC,
+                )
+                response = requests.post(
+                    CAPTION_GENERATOR_API_URL,
+                    json=payload,
+                    timeout=CAPTION_GENERATOR_TIMEOUT_SEC,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    caption = result.get("caption", "").strip()
+                    if caption:
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
+                        return caption
+                    util.logger.error("Caption API returned empty caption for %s", image_path)
+                elif response.status_code == 504:
+                    util.logger.warning(f"Server returned {response.status_code} (Processing) for {image_path}. Triggering retry...")
+                    raise requests.exceptions.Timeout(f"Server returned {response.status_code} Gateway Timeout")
+                else:
+                    try:
+                        err_msg = response.json()
+                    except Exception:
+                        err_msg = response.text
+                    util.logger.error(f"API Error {response.status_code}: {err_msg}")
+                    raise requests.exceptions.Timeout(f"Server returned {response.status_code}. Triggering retry...")
+            except requests.exceptions.Timeout:
+                if attempt >= attempts:
+                    util.logger.error("Caption request timed out after %d attempt(s) for %s", attempts, image_path)
+                sleep_s = CAPTION_GENERATOR_RETRY_BACKOFF * (2 ** (attempt - 1))
+                util.logger.warning(
+                    "Caption request timeout for %s; retrying in %.1fs (attempt %d/%d)",
+                    image_path,
+                    sleep_s,
+                    attempt,
+                    attempts,
+                )
+                time.sleep(sleep_s)
+            except Exception as e:
+                util.logger.error(f"Failed to generate caption for {image_path}: {e}")
+    except Exception as e:
+        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+        pass
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
 class PhotoCaption(models.Model):
     """Model for handling image captions and related functionality"""
@@ -43,6 +120,7 @@ class PhotoCaption(models.Model):
 
         try:
             image_path = self.photo.thumbnail.thumbnail_big.path
+            file_ext = str('.' + image_path.lower().split('.')[-1])
         except Exception:
             util.logger.warning(
                 f"Cannot access thumbnail path for photo {self.photo.image_hash}"
@@ -53,51 +131,53 @@ class PhotoCaption(models.Model):
         captions = self.captions_json
 
         try:
-            from constance import config as site_config
+            # from constance import config as site_config
 
-            if site_config.CAPTIONING_MODEL == "None":
-                util.logger.info("Generating captions is disabled")
-                return False
+            # if site_config.CAPTIONING_MODEL == "None":
+            #     util.logger.info("Generating captions is disabled")
+            #     return False
 
-            if site_config.CAPTIONING_MODEL == "moondream":
-                util.logger.info("Generating captions with Moondream")
-                return self._generate_captions_moondream(commit=commit)
+            # if site_config.CAPTIONING_MODEL == "moondream":
+            #     util.logger.info("Generating captions with Moondream")
+            #     return self._generate_captions_moondream(commit=commit)
 
-            blip = False
-            if site_config.CAPTIONING_MODEL == "blip_base_capfilt_large":
-                blip = True
+            # blip = False
+            # if site_config.CAPTIONING_MODEL == "blip_base_capfilt_large":
+            #     blip = True
 
-            caption = generate_caption(image_path=image_path, blip=blip)
-            caption = caption.replace("<start>", "").replace("<end>", "").strip()
+            # caption = generate_caption(image_path=image_path, blip=blip)
+            # caption = caption.replace("<start>", "").replace("<end>", "").strip()
 
-            settings = User.objects.get(username=self.photo.owner).llm_settings
-            if site_config.LLM_MODEL != "None" and settings["enabled"]:
-                face = api.models.Face.objects.filter(photo=self.photo).first()
-                person_name = ""
-                if face and settings["add_person"]:
-                    person_name = " Person: " + face.person.name
-                place = ""
-                if (
-                    self.photo.search_instance
-                    and self.photo.search_instance.search_location
-                    and settings["add_location"]
-                ):
-                    place = " Place: " + self.photo.search_instance.search_location
-                keywords = ""
-                if settings["add_keywords"]:
-                    keywords = " and tags or keywords"
-                prompt = (
-                    "Q: Your task is to improve the following image caption: "
-                    + caption
-                    + ". You also know the following information about the image:"
-                    + place
-                    + person_name
-                    + ". Stick as closely as possible to the caption, while replacing generic information with information you know about the image. Only output the caption"
-                    + keywords
-                    + ". \n A:"
-                )
-                util.logger.info(prompt)
-                caption = generate_prompt(prompt)
+            # settings = User.objects.get(username=self.photo.owner).llm_settings
+            # if site_config.LLM_MODEL != "None" and settings["enabled"]:
+            #     face = api.models.Face.objects.filter(photo=self.photo).first()
+            #     person_name = ""
+            #     if face and settings["add_person"]:
+            #         person_name = " Person: " + face.person.name
+            #     place = ""
+            #     if (
+            #         self.photo.search_instance
+            #         and self.photo.search_instance.search_location
+            #         and settings["add_location"]
+            #     ):
+            #         place = " Place: " + self.photo.search_instance.search_location
+            #     keywords = ""
+            #     if settings["add_keywords"]:
+            #         keywords = " and tags or keywords"
+            #     prompt = (
+            #         "Q: Your task is to improve the following image caption: "
+            #         + caption
+            #         + ". You also know the following information about the image:"
+            #         + place
+            #         + person_name
+            #         + ". Stick as closely as possible to the caption, while replacing generic information with information you know about the image. Only output the caption"
+            #         + keywords
+            #         + ". \n A:"
+            #     )
+            #     util.logger.info(prompt)
+            #     caption = generate_prompt(prompt)
+
+            caption = generate_image_caption(image_path, file_ext)
 
             captions["im2txt"] = caption
             self.captions_json = captions
@@ -106,7 +186,7 @@ class PhotoCaption(models.Model):
                 self.save()
 
             util.logger.info(
-                f"generated im2txt captions for image {image_path} with SiteConfig {site_config.CAPTIONING_MODEL} with Blip: {blip} caption: {caption}"
+                f"generated im2txt captions for image {image_path} with caption: {caption}"
             )
             return True
         except Exception:
@@ -249,7 +329,7 @@ class PhotoCaption(models.Model):
                     album_thing.save()
 
             for album_thing in api.models.album_thing.AlbumThing.objects.filter(
-                Q(photos__in=[self.photo.image_hash])
+                Q(photos__in=[self.photo])
                 & Q(thing_type="hashtag_attribute")
                 & Q(owner=self.photo.owner)
             ).all():
@@ -269,13 +349,23 @@ class PhotoCaption(models.Model):
         search_instance.recreate_search_captions()
         search_instance.save()
 
-    def generate_places365_captions(self, commit=True):
-        """Generate places365 captions"""
+    def generate_tag_captions(self, commit=True):
+        """Generate tag captions using the active tagging model (Places365 or SigLIP 2).
+
+        Tags are stored per-model in captions_json and are never deleted when
+        switching models -- only the active model's tags are generated / visible.
+        """
+        from constance import config as site_config
+
+        tagging_model = site_config.TAGGING_MODEL
+
+        if not self.photo.thumbnail or not self.photo.thumbnail.thumbnail_big:
+            return
+
+        # Skip if this photo already has tags from the active model
         if (
             self.captions_json is not None
-            and self.captions_json.get("places365") is not None
-            or not self.photo.thumbnail
-            or not self.photo.thumbnail.thumbnail_big
+            and self.captions_json.get(tagging_model) is not None
         ):
             return
 
@@ -287,57 +377,100 @@ class PhotoCaption(models.Model):
             json_data = {
                 "image_path": image_path,
                 "confidence": confidence,
+                "tagging_model": tagging_model,
             }
             res_places365 = requests.post(
                 f"http://{BACKEND_HOST}:8011/generate-tags", json=json_data
             ).json()["tags"]
 
+            if res_places365.status_code != 200:
+                util.logger.error(
+                    f"Could not generate tags for {image_path}. Status: {res_places365.status_code}. Response: {res_places365.text}"
+                )
+                return
+            
             if res_places365 is None:
                 return
             if self.captions_json is None:
                 self.captions_json = {}
 
-            self.captions_json["places365"] = res_places365
+            # Store under the model-specific key
+            self.captions_json[tagging_model] = res_places365
             self.recreate_search_captions()
 
-            # Remove old album associations
-            for album_thing in api.models.album_thing.AlbumThing.objects.filter(
-                Q(photos__in=[self.photo.image_hash])
-                & (
-                    Q(thing_type="places365_attribute")
-                    or Q(thing_type="places365_category")
-                )
-                & Q(owner=self.photo.owner)
-            ).all():
-                album_thing.photos.remove(self.photo)
-                album_thing.save()
-
-            # Add new album associations
-            if "attributes" in res_places365:
-                for attribute in res_places365["attributes"]:
-                    album_thing = api.models.album_thing.get_album_thing(
-                        title=attribute,
-                        owner=self.photo.owner,
-                        thing_type="places365_attribute",
-                    )
-                    album_thing.photos.add(self.photo)
-                    album_thing.save()
-
-            if "categories" in res_places365:
-                for category in res_places365["categories"]:
-                    album_thing = api.models.album_thing.get_album_thing(
-                        title=category,
-                        owner=self.photo.owner,
-                        thing_type="places365_category",
-                    )
-                    album_thing.photos.add(self.photo)
-                    album_thing.save()
+            if tagging_model == "siglip2":
+                self._update_siglip2_album_things(res_places365)
+            else:
+                self._update_places365_album_things(res_places365)
 
             if commit:
                 self.save()
-            util.logger.info(f"generated places365 captions for image {image_path}.")
+            util.logger.info(
+                f"generated {tagging_model} tags for image {image_path}."
+            )
         except Exception as e:
             util.logger.exception(
-                f"could not generate captions for image {self.photo.main_file.path if self.photo.main_file else 'no main file'}"
+                f"could not generate tags for image "
+                f"{self.photo.main_file.path if self.photo.main_file else 'no main file'}"
             )
             raise e
+
+    def _update_places365_album_things(self, res_places365):
+        """Create/update AlbumThing entries for Places365 tags."""
+        # Remove old album associations for this photo
+        for album_thing in api.models.album_thing.AlbumThing.objects.filter(
+            Q(photos__in=[self.photo])
+            & (
+                Q(thing_type="places365_attribute")
+                | Q(thing_type="places365_category")
+            )
+            & Q(owner=self.photo.owner)
+        ).all():
+            album_thing.photos.remove(self.photo)
+            album_thing.save()
+
+        if "attributes" in res_places365:
+            for attribute in res_places365["attributes"]:
+                album_thing = api.models.album_thing.get_album_thing(
+                    title=attribute,
+                    owner=self.photo.owner,
+                    thing_type="places365_attribute",
+                )
+                album_thing.photos.add(self.photo)
+                album_thing.save()
+
+        if "categories" in res_places365:
+            for category in res_places365["categories"]:
+                album_thing = api.models.album_thing.get_album_thing(
+                    title=category,
+                    owner=self.photo.owner,
+                    thing_type="places365_category",
+                )
+                album_thing.photos.add(self.photo)
+                album_thing.save()
+
+    def _update_siglip2_album_things(self, siglip2_result):
+        """Create/update AlbumThing entries for SigLIP 2 tags."""
+        tags = siglip2_result.get("tags", [])
+
+        # Remove old siglip2 album associations for this photo
+        for album_thing in api.models.album_thing.AlbumThing.objects.filter(
+            Q(photos__in=[self.photo])
+            & Q(thing_type="siglip2_tag")
+            & Q(owner=self.photo.owner)
+        ).all():
+            album_thing.photos.remove(self.photo)
+            album_thing.save()
+
+        for tag in tags:
+            album_thing = api.models.album_thing.get_album_thing(
+                title=tag,
+                owner=self.photo.owner,
+                thing_type="siglip2_tag",
+            )
+            album_thing.photos.add(self.photo)
+            album_thing.save()
+
+    # Backward-compatible alias
+    def generate_places365_captions(self, commit=True):
+        return self.generate_tag_captions(commit=commit)

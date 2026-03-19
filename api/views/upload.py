@@ -27,7 +27,7 @@ from api.models.photo_caption import PhotoCaption
 def generate_captions_wrapper(photo, commit=True):
     """Wrapper function to generate captions for use in chain"""
     caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
-    caption_instance.generate_places365_captions(commit=commit)
+    caption_instance.generate_tag_captions(commit=commit)
 
 
 class UploadPhotoExists(viewsets.ViewSet):
@@ -37,6 +37,9 @@ class UploadPhotoExists(viewsets.ViewSet):
             return Response({"exists": True})
         except Photo.DoesNotExist:
             return Response({"exists": False})
+        except Photo.MultipleObjectsReturned:
+            # Multiple photos with same hash - photo exists
+            return Response({"exists": True})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

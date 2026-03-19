@@ -1,10 +1,11 @@
 import os
+import tempfile
 import uuid
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase  # type: ignore
 
-from api.directory_watcher import handle_new_image
+from api.directory_watcher import handle_new_image, scan_photos
 from api.models import LongRunningJob, User
 
 
@@ -53,7 +54,7 @@ class ScanPercentageProgressTestCase(TestCase):
         files = self._scan_file_list()
         pre_fix_processed = self._simulate_pre_fix_progress(files)
         pre_fix_percentage = (pre_fix_processed / len(files)) * 100
-        pre_fix_summary = (
+        _pre_fix_summary = (
             f"Pre-fix simulated progress: {pre_fix_processed}/{len(files)} "
             f"({pre_fix_percentage:.1f}%) -> stuck"
         )
@@ -85,15 +86,19 @@ class ScanPercentageProgressTestCase(TestCase):
         thumbnail_mock._get_dominant_color.return_value = None
         search_instance_mock = MagicMock()
 
-        with patch(
-            "api.directory_watcher.create_new_image",
-            side_effect=mock_create_new_image,
-        ), patch(
-            "api.models.Thumbnail.objects.get_or_create",
-            return_value=(thumbnail_mock, True),
-        ), patch(
-            "api.models.PhotoSearch.objects.get_or_create",
-            return_value=(search_instance_mock, True),
+        with (
+            patch(
+                "api.directory_watcher.create_new_image",
+                side_effect=mock_create_new_image,
+            ),
+            patch(
+                "api.models.Thumbnail.objects.get_or_create",
+                return_value=(thumbnail_mock, True),
+            ),
+            patch(
+                "api.models.PhotoSearch.objects.get_or_create",
+                return_value=(search_instance_mock, True),
+            ),
         ):
             for path in files:
                 handle_new_image(self.user, path, self.job_id)
@@ -104,7 +109,7 @@ class ScanPercentageProgressTestCase(TestCase):
             if lrj.progress_target
             else 0
         )
-        file_breakdown = ["File breakdown:" ]
+        file_breakdown = ["File breakdown:"]
         for ext, total in sorted(discovered_by_ext.items()):
             created = photos_created_by_ext.get(ext, 0)
             behavior = "creates Photo" if created else "skipped"
@@ -116,9 +121,6 @@ class ScanPercentageProgressTestCase(TestCase):
             f"Scan job progress: {lrj.progress_current}/{lrj.progress_target} "
             f"({percentage:.1f}%) finished={lrj.finished}"
         )
-        print(pre_fix_summary)
-        print(breakdown_summary)
-        print(progress_summary)
 
         self.assertLess(
             pre_fix_processed,
@@ -134,4 +136,71 @@ class ScanPercentageProgressTestCase(TestCase):
         self.assertTrue(
             lrj.finished,
             f"{breakdown_summary}\n{progress_summary} -> Scan job must finish when current equals target.",
+        )
+
+
+class EmptyDirectoryScanTestCase(TestCase):
+    """Test that scanning an empty directory completes correctly."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="empty_scan_testuser",
+            password="testpass",
+        )
+        # Create a temporary empty directory for testing
+        self.temp_dir = tempfile.mkdtemp()
+        self.user.scan_directory = self.temp_dir
+        self.user.save()
+        self.job_id = uuid.uuid4()
+
+    def tearDown(self):
+        # Clean up temp directory
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_empty_directory_scan_completes_successfully(self):
+        """Ensure scanning an empty directory finishes with 0/0 progress."""
+        # Verify directory is empty
+        self.assertEqual(
+            len(os.listdir(self.temp_dir)),
+            0,
+            "Test directory should be empty",
+        )
+
+        # Mock db.connections.close_all() to prevent closing test DB connection
+        # Mock AsyncTask to prevent background task issues in tests
+        with (
+            patch("api.directory_watcher.scan_jobs.db.connections.close_all"),
+            patch("api.directory_watcher.scan_jobs.AsyncTask"),
+            patch("api.directory_watcher.scan_jobs.Chain"),
+        ):
+            # Run the scan
+            scan_photos(
+                self.user,
+                full_scan=True,
+                job_id=self.job_id,
+                scan_directory=self.temp_dir,
+            )
+
+        # Check job status
+        job = LongRunningJob.objects.get(job_id=self.job_id)
+
+        self.assertEqual(
+            job.progress_target,
+            0,
+            "Empty directory should have progress_target=0",
+        )
+        self.assertEqual(
+            job.progress_current,
+            0,
+            "Empty directory should have progress_current=0",
+        )
+        self.assertTrue(
+            job.finished,
+            "Empty directory scan should be marked as finished",
+        )
+        self.assertFalse(
+            job.failed,
+            "Empty directory scan should not be marked as failed",
         )
