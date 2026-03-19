@@ -3,6 +3,8 @@ import os.path
 
 import requests
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def get_sidecar_files_in_priority_order(media_file):
     """Returns a list of possible XMP sidecar files for *media_file*, ordered
@@ -49,5 +51,5 @@ def get_metadata(media_file, tags, try_sidecar=True, struct=False):
         "files_by_reverse_priority": files_by_reverse_priority,
         "struct": struct,
     }
-    response = requests.post("http://localhost:8010/get-tags", json=json).json()
+    response = requests.post(f"http://{BACKEND_HOST}:8010/get-tags", json=json).json()
     return response["values"]
