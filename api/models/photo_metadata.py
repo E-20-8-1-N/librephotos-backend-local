@@ -430,7 +430,7 @@ class MetadataEdit(models.Model):
     new_value = models.JSONField(null=True, blank=True)
 
     # Whether this edit has been written back to the file
-    synced_to_file = models.BooleanField(default=False)
+    synced_to_file = models.BooleanField(default=True)
     synced_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
