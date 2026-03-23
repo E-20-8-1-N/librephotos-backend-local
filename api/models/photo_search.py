@@ -9,12 +9,87 @@ import gc
 import torch
 import time
 
+# --- Configuration (from Environment Variables) ---
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 CAPTION_GENERATOR_HOST = os.getenv("CAPTION_GENERATOR_HOST", "caption-generator")
 CAPTION_GENERATOR_PORT = int(os.getenv("CAPTION_GENERATOR_PORT", 8020))
 CAPTION_GENERATOR_API_ENDPOINT = os.getenv("CAPTION_GENERATOR_API_ENDPOINT", "generate")
+CAPTION_GENERATOR_HEALTH_ENDPOINT = os.getenv("CAPTION_GENERATOR_HEALTH_ENDPOINT", "health")
 CAPTION_GENERATOR_TIMEOUT_SEC = int(os.getenv("CAPTION_GENERATOR_TIMEOUT_SEC", 300))
 CAPTION_GENERATOR_RETRIES = int(os.getenv("CAPTION_GENERATOR_RETRIES", 5))
 CAPTION_GENERATOR_RETRY_BACKOFF = float(os.getenv("CAPTION_GENERATOR_RETRY_BACKOFF", 2.0))
+CAPTION_GENERATOR_STARTUP_TIMEOUT_SEC = int(os.getenv("CAPTION_GENERATOR_STARTUP_TIMEOUT_SEC", 120))
+
+def ensure_caption_generator_ready() -> bool:
+    """
+    Ensure caption-generator container is running and health endpoint is reachable.
+    """
+    try:
+        import docker
+    except ImportError:
+        docker = None
+
+    health_url = f"http://{CAPTION_GENERATOR_HOST}:{CAPTION_GENERATOR_PORT}/{CAPTION_GENERATOR_HEALTH_ENDPOINT}"
+
+    # Fast path: already up
+    try:
+        response = requests.get(health_url, timeout=5)
+        if response.status_code == 200:
+            util.logger.info("caption-generator already healthy at %s", health_url)
+            return True
+    except Exception:
+        util.logger.info("caption-generator is not reachable yet, attempting startup")
+
+    if docker is None:
+        util.logger.error(
+            "Docker SDK is not installed; cannot start caption-generator container"
+        )
+        return False
+
+    try:
+        client = docker.from_env()
+        container = client.containers.get(CAPTION_GENERATOR_HOST)
+
+        container.reload()
+        status = container.status
+        util.logger.info(
+            "caption-generator container '%s' current status: %s",
+            CAPTION_GENERATOR_HOST,
+            status,
+        )
+
+        if status != "running":
+            util.logger.info(
+                "Starting caption-generator container '%s'",
+                CAPTION_GENERATOR_HOST,
+            )
+            container.start()
+    except Exception as e:
+        util.logger.error(
+            "Failed to start caption-generator container '%s': %s",
+            CAPTION_GENERATOR_HOST,
+            e,
+            exc_info=True,
+        )
+        return False
+
+    deadline = time.time() + CAPTION_GENERATOR_STARTUP_TIMEOUT_SEC
+    while time.time() < deadline:
+        try:
+            response = requests.get(health_url, timeout=5)
+            if response.status_code == 200:
+                util.logger.info("caption-generator is healthy and ready")
+                return True
+        except Exception:
+            pass
+
+        time.sleep(CAPTION_GENERATOR_RETRY_BACKOFF)
+
+    util.logger.error(
+        "caption-generator did not become ready within %s seconds",
+        CAPTION_GENERATOR_STARTUP_TIMEOUT_SEC,
+    )
+    return False
 
 def generate_image_caption(image_path: str, file_ext: str):
     """
@@ -23,6 +98,13 @@ def generate_image_caption(image_path: str, file_ext: str):
     CAPTION_GENERATOR_API_URL = f"http://{CAPTION_GENERATOR_HOST}:{CAPTION_GENERATOR_PORT}/{CAPTION_GENERATOR_API_ENDPOINT}"
 
     try:
+        if not ensure_caption_generator_ready():
+            util.logger.error(
+                "caption-generator is unavailable; cannot generate caption for %s",
+                image_path,
+            )
+            return None
+        
         payload = { 
             "file_path": image_path, 
             "file_ext": file_ext 
@@ -75,6 +157,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                 time.sleep(sleep_s)
             except Exception as e:
                 util.logger.error(f"Failed to generate caption for {image_path}: {e}")
+                break
     except Exception as e:
         util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
         pass
@@ -82,6 +165,7 @@ def generate_image_caption(image_path: str, file_ext: str):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
+    return None
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
