@@ -24,6 +24,7 @@ from api.serializers.photo_metadata import (
     PhotoMetadataSerializer,
     PhotoMetadataUpdateSerializer,
 )
+from api.util import logger
 
 
 class PhotoMetadataViewSet(ViewSet):
@@ -73,11 +74,17 @@ class PhotoMetadataViewSet(ViewSet):
     def _get_or_create_metadata(self, photo: Photo) -> PhotoMetadata:
         """Get or create PhotoMetadata for a photo."""
         if photo.main_file:
-            metadata = PhotoMetadata.extract_exif_data(
-                photo, commit=True, overwrite=False, try_sidecar=True
-            )
-            if metadata is not None:
-                return metadata
+            try:
+                metadata = PhotoMetadata.extract_exif_data(
+                    photo, commit=True, overwrite=False, try_sidecar=True
+                )
+                if metadata is not None:
+                    return metadata
+            except Exception:
+                logger.exception(
+                    "Failed to extract structured metadata for photo %s; falling back to stored metadata",
+                    photo.pk,
+                )
 
         metadata, created = PhotoMetadata.objects.get_or_create(
             photo=photo,

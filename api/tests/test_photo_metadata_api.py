@@ -54,6 +54,17 @@ class PhotoMetadataRetrieveTestCase(APITestCase):
         # Should have created metadata
         self.assertTrue(PhotoMetadata.objects.filter(photo=self.photo).exists())
 
+    @patch("api.views.photo_metadata.PhotoMetadata.extract_exif_data")
+    def test_get_metadata_falls_back_when_extraction_fails(self, mock_extract):
+        """Test GET returns stored metadata instead of 500 when extraction fails."""
+        mock_extract.side_effect = RuntimeError("bad exif payload")
+
+        response = self.client.get(f"/api/photos/{self.photo.pk}/metadata/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("id", response.data)
+        self.assertTrue(PhotoMetadata.objects.filter(photo=self.photo).exists())
+
     @patch("api.models.photo_metadata.get_metadata")
     def test_get_metadata_enriches_missing_fields_from_file(self, mock_get_metadata):
         """Test GET fills missing structured fields from the file metadata."""
