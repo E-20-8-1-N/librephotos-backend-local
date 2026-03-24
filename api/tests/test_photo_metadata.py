@@ -267,6 +267,62 @@ class PhotoMetadataModelTestCase(TestCase):
         self.assertEqual(metadata.shutter_speed, "1/50")
         self.assertEqual(metadata.shutter_speed_seconds, 0.02)
 
+    @patch("api.models.photo_metadata.get_metadata")
+    def test_extract_exif_data_normalizes_complex_exif_values(self, mock_get_metadata):
+        """Test extraction handles dict/list/date string values from exiftool."""
+        mock_get_metadata.return_value = [
+            12345,
+            "1.8",
+            "6.765 mm",
+            "125",
+            "1/50",
+            ["Apple"],
+            {"x-default": "iPhone 15 Pro Max"},
+            None,
+            {"x-default": "iPhone lens"},
+            "5712",
+            "4284",
+            "24",
+            None,
+            None,
+            "5",
+            "5",
+            "073",
+            "12",
+            "2026:03:24 10:20:30",
+            None,
+            "+08:00",
+            "37.3317",
+            "-122.0301",
+            "15 m",
+            {"x-default": "Localized title"},
+            {"en-US": "Localized caption"},
+            {"x-default": ["apple", "campus"]},
+            None,
+            ["Ethan", "Hui"],
+            {"x-default": "Copyright 2026"},
+            "Horizontal (normal)",
+            "sRGB",
+            "8 bits",
+            ["ABC123"],
+            "2026:03:24 10:21:00-07:00",
+        ]
+
+        metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
+
+        self.assertEqual(metadata.camera_make, "Apple")
+        self.assertEqual(metadata.camera_model, "iPhone 15 Pro Max")
+        self.assertEqual(metadata.lens_model, "iPhone lens")
+        self.assertEqual(metadata.title, "Localized title")
+        self.assertEqual(metadata.caption, "Localized caption")
+        self.assertEqual(metadata.keywords, ["apple", "campus"])
+        self.assertEqual(metadata.creator, "Ethan, Hui")
+        self.assertEqual(metadata.iso, 125)
+        self.assertEqual(metadata.width, 5712)
+        self.assertEqual(metadata.bit_depth, 8)
+        self.assertIsNotNone(metadata.date_taken)
+        self.assertIsNotNone(metadata.date_modified)
+
 
 class MetadataFileModelTestCase(TestCase):
     """Tests for MetadataFile model."""
