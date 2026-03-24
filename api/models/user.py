@@ -80,7 +80,7 @@ class User(AbstractUser):
         SIDECAR_FILE = "SIDECAR_FILE"
 
     save_metadata_to_disk = models.TextField(
-        choices=SaveMetadata.choices, default=SaveMetadata.OFF
+        choices=SaveMetadata.choices, default=SaveMetadata.MEDIA_FILE
     )
     save_face_tags_to_disk = models.BooleanField(default=False)
     llm_settings = models.JSONField(default=get_default_llm_settings)
