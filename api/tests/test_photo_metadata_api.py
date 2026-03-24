@@ -432,6 +432,35 @@ class PhotoMetadataRevertTestCase(APITestCase):
         response = self.client.post(f"/api/photos/{self.photo.pk}/metadata/revert/{edit.id}/")
         self.assertEqual(response.status_code, 404)
 
+    @patch("api.models.photo.write_metadata")
+    def test_revert_writes_to_sidecar_and_marks_synced(self, mock_write_metadata):
+        """Test revert writes restored metadata back to storage when enabled."""
+        self.user.save_metadata_to_disk = self.user.SaveMetadata.SIDECAR_FILE
+        self.user.save()
+
+        self.metadata.caption = "Changed caption"
+        self.metadata.save()
+        edit = MetadataEdit.objects.create(
+            photo=self.photo,
+            user=self.user,
+            field_name="caption",
+            old_value="Original caption",
+            new_value="Changed caption",
+        )
+
+        response = self.client.post(f"/api/photos/{self.photo.pk}/metadata/revert/{edit.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mock_write_metadata.assert_called_once()
+        written_tags = mock_write_metadata.call_args.args[1]
+        self.assertEqual(written_tags["XMP-dc:Description"], "Original caption")
+
+        revert_edit = MetadataEdit.objects.filter(
+            photo=self.photo,
+            field_name="caption",
+        ).latest("created_at")
+        self.assertTrue(revert_edit.synced_to_file)
+
 
 class PhotoMetadataRevertAllTestCase(APITestCase):
     """Test revert-all endpoint."""
@@ -455,6 +484,72 @@ class PhotoMetadataRevertAllTestCase(APITestCase):
         new_count = MetadataEdit.objects.filter(photo=self.photo).count()
         # Should have at least tried to create the record
         self.assertGreaterEqual(new_count, initial_count)
+
+    @patch("api.models.photo.write_metadata")
+    @patch("api.models.photo_metadata.get_metadata")
+    def test_revert_all_writes_restored_metadata_to_sidecar(
+        self, mock_get_metadata, mock_write_metadata
+    ):
+        """Test revert-all restores embedded values and syncs them to storage."""
+        self.user.save_metadata_to_disk = self.user.SaveMetadata.SIDECAR_FILE
+        self.user.save()
+
+        metadata, _ = PhotoMetadata.objects.get_or_create(photo=self.photo)
+        metadata.caption = "User caption"
+        metadata.title = "User title"
+        metadata.source = PhotoMetadata.Source.USER_EDIT
+        metadata.save()
+
+        mock_get_metadata.return_value = [
+            12345,
+            1.8,
+            6.765,
+            125,
+            0.02,
+            "Apple",
+            "iPhone 15 Pro Max",
+            "Apple",
+            "iPhone lens",
+            5712,
+            4284,
+            24,
+            None,
+            None,
+            0,
+            5,
+            "073",
+            12,
+            "2026:03:24 10:20:30",
+            None,
+            "+08:00",
+            37.3317,
+            -122.0301,
+            15.0,
+            "Embedded title",
+            "Embedded caption",
+            ["embedded", "keywords"],
+            None,
+            "Ethan",
+            "Copyright 2026",
+            1,
+            "sRGB",
+            8,
+            "ABC123",
+            "2026:03:24 10:21:00",
+        ]
+
+        response = self.client.post(f"/api/photos/{self.photo.pk}/metadata/revert-all/")
+
+        self.assertEqual(response.status_code, 200)
+        mock_write_metadata.assert_called_once()
+        written_tags = mock_write_metadata.call_args.args[1]
+        self.assertEqual(written_tags["XMP-dc:Title"], "Embedded title")
+        self.assertEqual(written_tags["XMP-dc:Description"], "Embedded caption")
+
+        revert_edit = MetadataEdit.objects.filter(photo=self.photo, field_name="_all").latest(
+            "created_at"
+        )
+        self.assertTrue(revert_edit.synced_to_file)
 
 
 class BulkMetadataGetTestCase(APITestCase):
@@ -586,6 +681,50 @@ class BulkMetadataUpdateTestCase(APITestCase):
             format="json"
         )
         self.assertEqual(response.status_code, 400)
+
+    @patch("api.models.photo.write_metadata")
+    def test_bulk_update_writes_to_sidecar_and_marks_synced(self, mock_write_metadata):
+        """Test bulk updates write structured metadata to storage when enabled."""
+        self.user.save_metadata_to_disk = self.user.SaveMetadata.SIDECAR_FILE
+        self.user.save()
+
+        photo_ids = [str(p.pk) for p in self.photos[:2]]
+        response = self.client.patch(
+            "/api/photos/metadata/bulk/",
+            {"photo_ids": photo_ids, "updates": {"caption": "Bulk caption"}},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_write_metadata.call_count, 2)
+
+        for photo in self.photos[:2]:
+            edit = MetadataEdit.objects.filter(photo=photo, field_name="caption").latest(
+                "created_at"
+            )
+            self.assertTrue(edit.synced_to_file)
+
+    @patch("api.models.photo.write_metadata")
+    def test_bulk_update_without_writeback_marks_unsynced(self, mock_write_metadata):
+        """Test bulk edits remain unsynced when writeback is disabled."""
+        self.user.save_metadata_to_disk = self.user.SaveMetadata.OFF
+        self.user.save()
+
+        photo_ids = [str(p.pk) for p in self.photos[:2]]
+        response = self.client.patch(
+            "/api/photos/metadata/bulk/",
+            {"photo_ids": photo_ids, "updates": {"caption": "Bulk caption"}},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_write_metadata.assert_not_called()
+
+        for photo in self.photos[:2]:
+            edit = MetadataEdit.objects.filter(photo=photo, field_name="caption").latest(
+                "created_at"
+            )
+            self.assertFalse(edit.synced_to_file)
 
 
 class PhotoMetadataEdgeCasesTestCase(APITestCase):
