@@ -322,7 +322,7 @@ class PhotoMetadata(models.Model):
         return None
 
     @classmethod
-    def extract_exif_data(cls, photo, commit=True, overwrite=True):
+    def extract_exif_data(cls, photo, commit=True, overwrite=True, try_sidecar=True):
         """
         Extract EXIF data from a photo's main file and update PhotoMetadata.
 
@@ -334,6 +334,7 @@ class PhotoMetadata(models.Model):
             photo: Photo instance to extract metadata from
             commit: Whether to save Photo and PhotoMetadata after extraction
             overwrite: Whether extracted values should replace existing metadata
+            try_sidecar: Whether sidecar metadata should override embedded metadata
 
         Returns:
             PhotoMetadata instance
@@ -381,7 +382,11 @@ class PhotoMetadata(models.Model):
         tag_values = dict(
             zip(
                 requested_tags,
-                get_metadata(photo.main_file.path, tags=requested_tags, try_sidecar=True),
+                get_metadata(
+                    photo.main_file.path,
+                    tags=requested_tags,
+                    try_sidecar=try_sidecar,
+                ),
             )
         )
 
