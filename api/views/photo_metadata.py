@@ -9,6 +9,7 @@ Provides endpoints for:
 """
 
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -38,6 +39,18 @@ class PhotoMetadataViewSet(ViewSet):
 
     permission_classes = [IsAuthenticated]
 
+    WRITABLE_METADATA_FIELDS = {
+        "title",
+        "caption",
+        "keywords",
+        "rating",
+        "copyright",
+        "creator",
+        "gps_latitude",
+        "gps_longitude",
+        "date_taken",
+    }
+
     def _get_photo(self, request, photo_id: str) -> Photo:
         """Get photo by ID or image_hash, checking permissions."""
         # UUID format is 36 chars with 4 hyphens (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
@@ -61,7 +74,7 @@ class PhotoMetadataViewSet(ViewSet):
         """Get or create PhotoMetadata for a photo."""
         if photo.main_file:
             metadata = PhotoMetadata.extract_exif_data(
-                photo, commit=True, overwrite=False
+                photo, commit=True, overwrite=False, try_sidecar=True
             )
             if metadata is not None:
                 return metadata
@@ -78,6 +91,52 @@ class PhotoMetadataViewSet(ViewSet):
             }
         )
         return metadata
+
+    def _sync_photo_fields(self, photo: Photo, metadata: PhotoMetadata, changed_fields):
+        """Keep legacy Photo fields aligned with writable PhotoMetadata changes."""
+        photo_update_fields = []
+
+        if "rating" in changed_fields:
+            photo.rating = metadata.rating or 0
+            photo_update_fields.append("rating")
+        if "gps_latitude" in changed_fields:
+            photo.exif_gps_lat = metadata.gps_latitude
+            photo_update_fields.append("exif_gps_lat")
+        if "gps_longitude" in changed_fields:
+            photo.exif_gps_lon = metadata.gps_longitude
+            photo_update_fields.append("exif_gps_lon")
+        if "date_taken" in changed_fields:
+            photo.exif_timestamp = metadata.date_taken
+            photo_update_fields.append("exif_timestamp")
+
+        if photo_update_fields:
+            photo.save(update_fields=photo_update_fields, save_metadata=False)
+
+    def _write_metadata_to_storage(self, request, photo: Photo, changed_fields):
+        """Write structured metadata to media file or sidecar based on user settings."""
+        writable_fields = changed_fields & self.WRITABLE_METADATA_FIELDS
+
+        if not writable_fields or photo.main_file is None:
+            return False
+
+        if request.user.save_metadata_to_disk == request.user.SaveMetadata.OFF:
+            return False
+
+        photo._save_metadata(
+            use_sidecar=(
+                request.user.save_metadata_to_disk == request.user.SaveMetadata.SIDECAR_FILE
+            ),
+            metadata_types=["structured"],
+            metadata_fields=sorted(writable_fields),
+        )
+        return True
+
+    def _mark_edits_synced(self, edits, synced):
+        synced_at = timezone.now() if synced else None
+        for edit in edits:
+            edit.synced_to_file = synced
+            edit.synced_at = synced_at
+            edit.save(update_fields=["synced_to_file", "synced_at"])
 
     @extend_schema(
         description="Get full structured metadata for a photo.",
@@ -155,18 +214,29 @@ class PhotoMetadataViewSet(ViewSet):
         current_value = getattr(metadata, field_name, None)
         
         # Create a new edit record for the revert
-        MetadataEdit.objects.create(
+        revert_edit = MetadataEdit.objects.create(
             photo=photo,
             user=request.user,
             field_name=field_name,
             old_value=current_value,
             new_value=old_value,
+            synced_to_file=False,
         )
         
         # Apply the revert
         setattr(metadata, field_name, old_value)
+        metadata.source = PhotoMetadata.Source.USER_EDIT
         metadata.version += 1
         metadata.save()
+
+        changed_fields = {field_name}
+        self._sync_photo_fields(photo, metadata, changed_fields)
+
+        synced = False
+        try:
+            synced = self._write_metadata_to_storage(request, photo, changed_fields)
+        finally:
+            self._mark_edits_synced([revert_edit], synced)
         
         return Response(PhotoMetadataSerializer(metadata).data)
 
@@ -178,21 +248,28 @@ class PhotoMetadataViewSet(ViewSet):
     def revert_all(self, request, photo_id: str):
         """Revert all edits and restore original metadata from file by re-extracting EXIF."""
         photo = self._get_photo(request, photo_id)
+        revert_edit = None
         
         try:
             metadata = photo.metadata
             # Record the revert
-            MetadataEdit.objects.create(
+            revert_edit = MetadataEdit.objects.create(
                 photo=photo,
                 user=request.user,
                 field_name="_all",
                 old_value={"action": "revert_all"},
                 new_value={"source": "embedded"},
+                synced_to_file=False,
             )
             
             # Re-extract EXIF data from the file to restore original values
             # This will update PhotoMetadata with fresh data from the image file
-            PhotoMetadata.extract_exif_data(photo, commit=True)
+            PhotoMetadata.extract_exif_data(
+                photo,
+                commit=True,
+                overwrite=True,
+                try_sidecar=False,
+            )
             
             # Refresh metadata from database
             metadata.refresh_from_db()
@@ -202,7 +279,23 @@ class PhotoMetadataViewSet(ViewSet):
             
         except PhotoMetadata.DoesNotExist:
             # If no metadata exists, extract it fresh
-            metadata = PhotoMetadata.extract_exif_data(photo, commit=True)
+            metadata = PhotoMetadata.extract_exif_data(
+                photo,
+                commit=True,
+                overwrite=True,
+                try_sidecar=False,
+            )
+
+        if metadata is not None:
+            changed_fields = self.WRITABLE_METADATA_FIELDS
+            self._sync_photo_fields(photo, metadata, changed_fields)
+
+            synced = False
+            try:
+                synced = self._write_metadata_to_storage(request, photo, changed_fields)
+            finally:
+                if revert_edit is not None:
+                    self._mark_edits_synced([revert_edit], synced)
         
         return Response(PhotoMetadataSerializer(metadata).data)
 
@@ -213,6 +306,36 @@ class BulkMetadataView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+
+    WRITABLE_METADATA_FIELDS = PhotoMetadataViewSet.WRITABLE_METADATA_FIELDS
+
+    def _sync_photo_fields(self, photo: Photo, metadata: PhotoMetadata, changed_fields):
+        PhotoMetadataViewSet()._sync_photo_fields(photo, metadata, changed_fields)
+
+    def _write_metadata_to_storage(self, request, photo: Photo, changed_fields):
+        writable_fields = changed_fields & self.WRITABLE_METADATA_FIELDS
+
+        if not writable_fields or photo.main_file is None:
+            return False
+
+        if request.user.save_metadata_to_disk == request.user.SaveMetadata.OFF:
+            return False
+
+        photo._save_metadata(
+            use_sidecar=(
+                request.user.save_metadata_to_disk == request.user.SaveMetadata.SIDECAR_FILE
+            ),
+            metadata_types=["structured"],
+            metadata_fields=sorted(writable_fields),
+        )
+        return True
+
+    def _mark_edits_synced(self, edits, synced):
+        synced_at = timezone.now() if synced else None
+        for edit in edits:
+            edit.synced_to_file = synced
+            edit.synced_at = synced_at
+            edit.save(update_fields=["synced_to_file", "synced_at"])
 
     @extend_schema(
         description="Get metadata summary for multiple photos.",
@@ -332,22 +455,38 @@ class BulkMetadataView(APIView):
         updated_count = 0
         for photo in photos:
             metadata, _ = PhotoMetadata.objects.get_or_create(photo=photo)
+            changed_fields = set()
+            edits = []
             
             for field_name, new_value in updates.items():
                 old_value = getattr(metadata, field_name, None)
                 if old_value != new_value:
-                    MetadataEdit.objects.create(
+                    edit = MetadataEdit.objects.create(
                         photo=photo,
                         user=request.user,
                         field_name=field_name,
                         old_value=old_value,
                         new_value=new_value,
+                        synced_to_file=False,
                     )
+                    edits.append(edit)
                     setattr(metadata, field_name, new_value)
+                    changed_fields.add(field_name)
+
+            if not changed_fields:
+                continue
             
             metadata.source = PhotoMetadata.Source.USER_EDIT
             metadata.version += 1
             metadata.save()
+
+            self._sync_photo_fields(photo, metadata, changed_fields)
+
+            synced = False
+            try:
+                synced = self._write_metadata_to_storage(request, photo, changed_fields)
+            finally:
+                self._mark_edits_synced(edits, synced)
             updated_count += 1
         
         return Response({
