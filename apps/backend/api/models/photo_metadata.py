@@ -32,7 +32,9 @@ EXIF_VALUE_NAMES = (
     "focal_length",
     "iso",
     "shutter_speed",
+    "camera_make",
     "camera",
+    "lens_make",
     "lens",
     "width",
     "height",
@@ -43,8 +45,23 @@ EXIF_VALUE_NAMES = (
     "rating",
     "subsec_time_original",
     "image_number",
+    "date_time_original",
+    "quicktime_create_date",
+    "timezone_offset",
+    "latitude",
+    "longitude",
+    "gps_altitude",
+    "title",
+    "xmp_description",
     "xmp_subject",
     "iptc_keywords",
+    "creator",
+    "copyright",
+    "orientation",
+    "color_space",
+    "bit_depth",
+    "serial_number",
+    "file_modify_date",
 )
 
 EXIF_TAGS = [
@@ -53,7 +70,9 @@ EXIF_TAGS = [
     Tags.FOCAL_LENGTH,
     Tags.ISO,
     Tags.EXPOSURE_TIME,
+    Tags.CAMERA_MAKE,
     Tags.CAMERA,
+    Tags.LENS_MAKE,
     Tags.LENS,
     Tags.IMAGE_WIDTH,
     Tags.IMAGE_HEIGHT,
@@ -64,25 +83,24 @@ EXIF_TAGS = [
     Tags.RATING,
     Tags.SUBSEC_TIME_ORIGINAL,
     Tags.IMAGE_NUMBER,
+    Tags.DATE_TIME_ORIGINAL,
+    Tags.QUICKTIME_CREATE_DATE,
+    Tags.TIMEZONE_OFFSET,
+    Tags.LATITUDE,
+    Tags.LONGITUDE,
+    Tags.GPS_ALTITUDE,
+    Tags.TITLE,
+    Tags.DESCRIPTION,
     Tags.SUBJECT,
     Tags.IPTC_KEYWORDS,
+    Tags.CREATOR,
+    Tags.COPYRIGHT,
+    Tags.ORIENTATION,
+    Tags.COLOR_SPACE,
+    Tags.BIT_DEPTH,
+    Tags.SERIAL_NUMBER,
+    Tags.FILE_MODIFY_DATE,
 ]
-
-
-def _assign_nonzero_number(target, field, value):
-    if value and isinstance(value, numbers.Number):
-        setattr(target, field, value)
-
-
-def _assign_number(target, field, value):
-    if value is not None and isinstance(value, numbers.Number):
-        setattr(target, field, value)
-
-
-def _assign_string(target, field, value):
-    if value and isinstance(value, str):
-        setattr(target, field, value)
-
 
 def _merge_keywords(*values):
     """Merge XMP:Subject / IPTC:Keywords entries, deduplicated and sorted."""
@@ -357,7 +375,42 @@ class PhotoMetadata(models.Model):
         return self.lens_model or self.lens_make
 
     @classmethod
-    def extract_exif_data(cls, photo, commit=True):
+    def _is_blank_value(cls, value):
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return value == ""
+        if isinstance(value, (list, tuple, dict, set)):
+            return len(value) == 0
+        return False
+
+    @classmethod
+    def _set_if_present(cls, obj, field_name, value, update_fields, overwrite):
+        if cls._is_blank_value(value):
+            return
+
+        current_value = getattr(obj, field_name)
+        if overwrite or cls._is_blank_value(current_value):
+            setattr(obj, field_name, value)
+            update_fields.add(field_name)
+
+    @staticmethod
+    def _normalize_keywords(value):
+        if value is None:
+            return None
+        if isinstance(value, list):
+            normalized = [str(item).strip() for item in value if str(item).strip()]
+            return normalized or None
+        if isinstance(value, str):
+            if "," in value:
+                normalized = [item.strip() for item in value.split(",") if item.strip()]
+                return normalized or None
+            stripped = value.strip()
+            return [stripped] if stripped else None
+        return None
+
+    @classmethod
+    def extract_exif_data(cls, photo, commit=True, overwrite=True):
         """
         Extract EXIF data from a photo's main file and update PhotoMetadata.
 
@@ -368,6 +421,7 @@ class PhotoMetadata(models.Model):
         Args:
             photo: Photo instance to extract metadata from
             commit: Whether to save Photo and PhotoMetadata after extraction
+            overwrite: Whether extracted values should replace existing metadata
 
         Returns:
             PhotoMetadata instance
@@ -382,42 +436,56 @@ class PhotoMetadata(models.Model):
             )
         )
 
-        cls._apply_to_photo(photo, values)
-        if commit:
-            photo.save()
+        photo_update_fields = cls._apply_to_photo(photo, values)
+        if commit and photo_update_fields:
+            photo.save(update_fields=sorted(photo_update_fields), save_metadata=False)
 
-        metadata, created = cls.objects.get_or_create(
+        metadata, _ = cls.objects.get_or_create(
             photo=photo, defaults={"source": cls.Source.EMBEDDED}
         )
-        cls._apply_to_metadata(metadata, values)
+        metadata_update_fields = cls._apply_to_metadata(metadata, values, overwrite)
 
+        if commit and metadata_update_fields:
+            metadata.save(update_fields=sorted(metadata_update_fields))
         if commit:
-            metadata.save()
-            # "Import tags from EXIF": the keywords read above also become Tag rows.
+            # "Import tags from EXIF": extracted keywords also become Tag rows.
             link_tags_from_keywords(photo, metadata.keywords)
 
         return metadata
 
-    @staticmethod
-    def _apply_to_photo(photo, values):
+    @classmethod
+    def _apply_to_photo(cls, photo, values):
         """Update the Photo fields that are still stored outside PhotoMetadata."""
-        _assign_nonzero_number(photo, "size", values["size"])
-        _assign_nonzero_number(photo, "video_length", values["video_length"])
-        _assign_number(photo, "rating", values["rating"])
+        update_fields = set()
+        for field, value in (
+            ("size", values["size"]),
+            ("video_length", values["video_length"]),
+            ("rating", values["rating"]),
+            ("exif_gps_lat", values["latitude"]),
+            ("exif_gps_lon", values["longitude"]),
+        ):
+            if value is not None and isinstance(value, numbers.Number):
+                setattr(photo, field, value)
+                update_fields.add(field)
 
         # Burst/sequence detection fields
         subsec_time_original = values["subsec_time_original"]
         if subsec_time_original:
             # SubSecTimeOriginal is typically a string like "123" representing milliseconds
             photo.exif_timestamp_subsec = str(subsec_time_original)[:10]
+            update_fields.add("exif_timestamp_subsec")
 
         image_number = values["image_number"]
         if image_number is not None and isinstance(image_number, numbers.Number):
             photo.image_sequence_number = int(image_number)
+            update_fields.add("image_sequence_number")
 
-    @staticmethod
-    def _apply_to_metadata(metadata, values):
+        return update_fields
+
+    @classmethod
+    def _apply_to_metadata(cls, metadata, values, overwrite):
         """Populate the PhotoMetadata columns from the extracted EXIF values."""
+        update_fields = set()
         for field, name in (
             ("aperture", "fstop"),
             ("focal_length", "focal_length"),
@@ -425,26 +493,76 @@ class PhotoMetadata(models.Model):
             ("width", "width"),
             ("height", "height"),
             ("focal_length_35mm", "focal_length_35mm"),
+            ("rating", "rating"),
+            ("gps_latitude", "latitude"),
+            ("gps_longitude", "longitude"),
+            ("gps_altitude", "gps_altitude"),
+            ("orientation", "orientation"),
+            ("bit_depth", "bit_depth"),
         ):
-            _assign_nonzero_number(metadata, field, values[name])
+            cls._set_if_present(
+                metadata, field, values[name], update_fields, overwrite
+            )
 
-        _assign_string(metadata, "camera_model", values["camera"])
-        _assign_string(metadata, "lens_model", values["lens"])
-        _assign_number(metadata, "rating", values["rating"])
+        for field, name in (
+            ("camera_make", "camera_make"),
+            ("camera_model", "camera"),
+            ("lens_make", "lens_make"),
+            ("lens_model", "lens"),
+            ("timezone_offset", "timezone_offset"),
+            ("title", "title"),
+            ("caption", "xmp_description"),
+            ("creator", "creator"),
+            ("copyright", "copyright"),
+            ("color_space", "color_space"),
+            ("serial_number", "serial_number"),
+            ("date_modified", "file_modify_date"),
+        ):
+            cls._set_if_present(
+                metadata, field, values[name], update_fields, overwrite
+            )
+
+        date_taken = values["date_time_original"] or values["quicktime_create_date"]
+        cls._set_if_present(
+            metadata, "date_taken", date_taken, update_fields, overwrite
+        )
 
         shutter_speed = values["shutter_speed"]
-        if shutter_speed and isinstance(shutter_speed, numbers.Number):
-            metadata.shutter_speed = str(
-                Fraction(shutter_speed).limit_denominator(1000)
+        if isinstance(shutter_speed, numbers.Number):
+            cls._set_if_present(
+                metadata,
+                "shutter_speed_seconds",
+                float(shutter_speed),
+                update_fields,
+                overwrite,
+            )
+            cls._set_if_present(
+                metadata,
+                "shutter_speed",
+                str(Fraction(shutter_speed).limit_denominator(1000)),
+                update_fields,
+                overwrite,
+            )
+        elif isinstance(shutter_speed, str):
+            cls._set_if_present(
+                metadata, "shutter_speed", shutter_speed, update_fields, overwrite
             )
 
         subsec_time_original = values["subsec_time_original"]
         if subsec_time_original:
-            metadata.date_taken_subsec = str(subsec_time_original)[:10]
+            cls._set_if_present(
+                metadata,
+                "date_taken_subsec",
+                str(subsec_time_original)[:10],
+                update_fields,
+                overwrite,
+            )
 
         keywords = _merge_keywords(values["xmp_subject"], values["iptc_keywords"])
-        if keywords:
-            metadata.keywords = keywords
+        cls._set_if_present(
+            metadata, "keywords", keywords, update_fields, overwrite
+        )
+        return update_fields
 
 
 class MetadataEdit(models.Model):
