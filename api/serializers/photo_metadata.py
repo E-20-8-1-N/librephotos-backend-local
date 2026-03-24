@@ -7,6 +7,7 @@ These serializers provide:
 - Backwards-compatible field names for existing API consumers
 """
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from api.models import Photo
@@ -190,30 +191,83 @@ class PhotoMetadataUpdateSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         """Update metadata and create edit history records."""
-        user = self.context.get("request").user if self.context.get("request") else None
-        
+        request = self.context.get("request")
+        user = request.user if request else None
+        edits = []
+        changed_fields = []
+
         for field_name, new_value in validated_data.items():
             old_value = getattr(instance, field_name)
-            
+
             # Only track actual changes
             if old_value != new_value:
                 # Create edit history record
-                MetadataEdit.objects.create(
+                edit = MetadataEdit.objects.create(
                     photo=instance.photo,
                     user=user,
                     field_name=field_name,
                     old_value=old_value,
                     new_value=new_value,
+                    synced_to_file=False,
                 )
-                
+                edits.append(edit)
+                changed_fields.append(field_name)
+
                 # Update the field
                 setattr(instance, field_name, new_value)
-        
+
+        if not changed_fields:
+            return instance
+
+        photo = instance.photo
+        photo_update_fields = []
+
+        if "rating" in validated_data:
+            photo.rating = instance.rating or 0
+            photo_update_fields.append("rating")
+        if "gps_latitude" in validated_data:
+            photo.exif_gps_lat = instance.gps_latitude
+            photo_update_fields.append("exif_gps_lat")
+        if "gps_longitude" in validated_data:
+            photo.exif_gps_lon = instance.gps_longitude
+            photo_update_fields.append("exif_gps_lon")
+        if "date_taken" in validated_data:
+            photo.exif_timestamp = instance.date_taken
+            photo_update_fields.append("exif_timestamp")
+
         # Update source to user_edit and increment version
         instance.source = PhotoMetadata.Source.USER_EDIT
         instance.version += 1
         instance.save()
-        
+
+        if photo_update_fields:
+            photo.save(update_fields=photo_update_fields, save_metadata=False)
+
+        can_sync_to_file = (
+            user is not None
+            and photo.main_file is not None
+            and user.save_metadata_to_disk != user.SaveMetadata.OFF
+        )
+        if can_sync_to_file:
+            try:
+                photo._save_metadata(
+                    use_sidecar=(
+                        user.save_metadata_to_disk == user.SaveMetadata.SIDECAR_FILE
+                    ),
+                    metadata_types=["structured"],
+                    metadata_fields=changed_fields,
+                )
+                synced_at = timezone.now()
+                for edit in edits:
+                    edit.synced_to_file = True
+                    edit.synced_at = synced_at
+                    edit.save(update_fields=["synced_to_file", "synced_at"])
+            except Exception:
+                for edit in edits:
+                    edit.synced_to_file = False
+                    edit.synced_at = None
+                    edit.save(update_fields=["synced_to_file", "synced_at"])
+
         return instance
 
 

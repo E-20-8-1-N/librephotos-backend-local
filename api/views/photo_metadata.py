@@ -59,6 +59,13 @@ class PhotoMetadataViewSet(ViewSet):
 
     def _get_or_create_metadata(self, photo: Photo) -> PhotoMetadata:
         """Get or create PhotoMetadata for a photo."""
+        if photo.main_file:
+            metadata = PhotoMetadata.extract_exif_data(
+                photo, commit=True, overwrite=False
+            )
+            if metadata is not None:
+                return metadata
+
         metadata, created = PhotoMetadata.objects.get_or_create(
             photo=photo,
             defaults={

@@ -205,7 +205,11 @@ class Photo(models.Model):
         )
 
     def _save_metadata(
-        self, modified_fields=None, use_sidecar=True, metadata_types=None
+        self,
+        modified_fields=None,
+        use_sidecar=True,
+        metadata_types=None,
+        metadata_fields=None,
     ):
         """Write metadata tags to the photo's file or sidecar.
 
@@ -214,13 +218,25 @@ class Photo(models.Model):
                 When None, writes all applicable tags unconditionally.
             use_sidecar: Write to XMP sidecar file if True, media file if False.
             metadata_types: List of metadata categories to write, e.g.
-                ["ratings", "face_tags"]. When None, uses default behavior
+                ["ratings", "face_tags", "structured"]. When None, uses default behavior
                 (ratings/timestamps only, for backward compatibility).
+            metadata_fields: List of changed structured metadata field names.
         """
         tags_to_write = {}
 
         write_ratings = metadata_types is None or "ratings" in metadata_types
         write_face_tags = metadata_types is not None and "face_tags" in metadata_types
+        write_structured = metadata_types is not None and "structured" in metadata_types
+
+        def should_write_metadata_field(field_name):
+            return metadata_fields is None or field_name in metadata_fields
+
+        def format_datetime(value):
+            if value is None:
+                return None
+            if hasattr(value, "strftime"):
+                return value.strftime("%Y:%m:%d %H:%M:%S")
+            return value
 
         if write_ratings:
             if modified_fields is None or "rating" in modified_fields:
@@ -233,6 +249,36 @@ class Photo(models.Model):
             from api.metadata.face_regions import get_face_region_tags
 
             tags_to_write.update(get_face_region_tags(self))
+
+        if write_structured and hasattr(self, "metadata"):
+            metadata = self.metadata
+
+            if should_write_metadata_field("title"):
+                tags_to_write[Tags.TITLE_WRITE] = metadata.title or ""
+                tags_to_write[Tags.TITLE_IPTC_WRITE] = metadata.title or ""
+            if should_write_metadata_field("caption"):
+                tags_to_write[Tags.DESCRIPTION_WRITE] = metadata.caption or ""
+                tags_to_write[Tags.DESCRIPTION_IPTC_WRITE] = metadata.caption or ""
+            if should_write_metadata_field("keywords"):
+                tags_to_write[Tags.SUBJECT] = metadata.keywords or []
+                tags_to_write[Tags.IPTC_KEYWORDS] = metadata.keywords or []
+            if should_write_metadata_field("copyright"):
+                tags_to_write[Tags.COPYRIGHT_WRITE] = metadata.copyright or ""
+                tags_to_write[Tags.COPYRIGHT_IPTC_WRITE] = metadata.copyright or ""
+            if should_write_metadata_field("creator"):
+                tags_to_write[Tags.CREATOR_WRITE] = metadata.creator or ""
+                tags_to_write[Tags.CREATOR_IPTC_WRITE] = metadata.creator or ""
+            if should_write_metadata_field("date_taken"):
+                formatted_date_taken = format_datetime(metadata.date_taken)
+                if formatted_date_taken is not None:
+                    tags_to_write[Tags.DATE_TIME_ORIGINAL] = formatted_date_taken
+                    tags_to_write[Tags.DATE_TIME_ORIGINAL_XMP] = formatted_date_taken
+            if should_write_metadata_field("gps_latitude") and metadata.gps_latitude is not None:
+                tags_to_write[Tags.GPS_LATITUDE_WRITE] = metadata.gps_latitude
+            if should_write_metadata_field("gps_longitude") and metadata.gps_longitude is not None:
+                tags_to_write[Tags.GPS_LONGITUDE_WRITE] = metadata.gps_longitude
+            if should_write_metadata_field("rating") and metadata.rating is not None:
+                tags_to_write[Tags.RATING] = metadata.rating
 
         if tags_to_write:
             write_metadata(self.main_file.path, tags_to_write, use_sidecar=use_sidecar)
