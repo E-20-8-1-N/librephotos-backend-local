@@ -286,7 +286,42 @@ class PhotoMetadata(models.Model):
         return self.lens_model or self.lens_make
 
     @classmethod
-    def extract_exif_data(cls, photo, commit=True):
+    def _is_blank_value(cls, value):
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return value == ""
+        if isinstance(value, (list, tuple, dict, set)):
+            return len(value) == 0
+        return False
+
+    @classmethod
+    def _set_if_present(cls, obj, field_name, value, update_fields, overwrite):
+        if cls._is_blank_value(value):
+            return
+
+        current_value = getattr(obj, field_name)
+        if overwrite or cls._is_blank_value(current_value):
+            setattr(obj, field_name, value)
+            update_fields.add(field_name)
+
+    @staticmethod
+    def _normalize_keywords(value):
+        if value is None:
+            return None
+        if isinstance(value, list):
+            normalized = [str(item).strip() for item in value if str(item).strip()]
+            return normalized or None
+        if isinstance(value, str):
+            if "," in value:
+                normalized = [item.strip() for item in value.split(",") if item.strip()]
+                return normalized or None
+            stripped = value.strip()
+            return [stripped] if stripped else None
+        return None
+
+    @classmethod
+    def extract_exif_data(cls, photo, commit=True, overwrite=True):
         """
         Extract EXIF data from a photo's main file and update PhotoMetadata.
 
@@ -297,6 +332,7 @@ class PhotoMetadata(models.Model):
         Args:
             photo: Photo instance to extract metadata from
             commit: Whether to save Photo and PhotoMetadata after extraction
+            overwrite: Whether extracted values should replace existing metadata
 
         Returns:
             PhotoMetadata instance
@@ -304,98 +340,280 @@ class PhotoMetadata(models.Model):
         if not photo.main_file:
             return None
 
-        (
-            size,
-            fstop,
-            focal_length,
-            iso,
-            shutter_speed,
-            camera,
-            lens,
-            width,
-            height,
-            focalLength35Equivalent,
-            subjectDistance,
-            digitalZoomRatio,
-            video_length,
-            rating,
-            subsec_time_original,
-            image_number,
-        ) = get_metadata(  # noqa: E501
-            photo.main_file.path,
-            tags=[
-                Tags.FILE_SIZE,
-                Tags.FSTOP,
-                Tags.FOCAL_LENGTH,
-                Tags.ISO,
-                Tags.EXPOSURE_TIME,
-                Tags.CAMERA,
-                Tags.LENS,
-                Tags.IMAGE_WIDTH,
-                Tags.IMAGE_HEIGHT,
-                Tags.FOCAL_LENGTH_35MM,
-                Tags.SUBJECT_DISTANCE,
-                Tags.DIGITAL_ZOOM_RATIO,
-                Tags.QUICKTIME_DURATION,
-                Tags.RATING,
-                Tags.SUBSEC_TIME_ORIGINAL,
-                Tags.IMAGE_NUMBER,
-            ],
-            try_sidecar=True,
+        requested_tags = [
+            Tags.FILE_SIZE,
+            Tags.FSTOP,
+            Tags.FOCAL_LENGTH,
+            Tags.ISO,
+            Tags.EXPOSURE_TIME,
+            Tags.CAMERA_MAKE,
+            Tags.CAMERA,
+            Tags.LENS_MAKE,
+            Tags.LENS,
+            Tags.IMAGE_WIDTH,
+            Tags.IMAGE_HEIGHT,
+            Tags.FOCAL_LENGTH_35MM,
+            Tags.SUBJECT_DISTANCE,
+            Tags.DIGITAL_ZOOM_RATIO,
+            Tags.QUICKTIME_DURATION,
+            Tags.RATING,
+            Tags.SUBSEC_TIME_ORIGINAL,
+            Tags.IMAGE_NUMBER,
+            Tags.DATE_TIME_ORIGINAL,
+            Tags.QUICKTIME_CREATE_DATE,
+            Tags.TIMEZONE_OFFSET,
+            Tags.LATITUDE,
+            Tags.LONGITUDE,
+            Tags.GPS_ALTITUDE,
+            Tags.TITLE,
+            Tags.DESCRIPTION,
+            Tags.SUBJECT,
+            Tags.KEYWORDS_IPTC,
+            Tags.CREATOR,
+            Tags.COPYRIGHT,
+            Tags.ORIENTATION,
+            Tags.COLOR_SPACE,
+            Tags.BIT_DEPTH,
+            Tags.SERIAL_NUMBER,
+            Tags.FILE_MODIFY_DATE,
+        ]
+        tag_values = dict(
+            zip(
+                requested_tags,
+                get_metadata(photo.main_file.path, tags=requested_tags, try_sidecar=True),
+            )
         )
 
+        size = tag_values.get(Tags.FILE_SIZE)
+        fstop = tag_values.get(Tags.FSTOP)
+        focal_length = tag_values.get(Tags.FOCAL_LENGTH)
+        iso = tag_values.get(Tags.ISO)
+        shutter_speed = tag_values.get(Tags.EXPOSURE_TIME)
+        camera_make = tag_values.get(Tags.CAMERA_MAKE)
+        camera = tag_values.get(Tags.CAMERA)
+        lens_make = tag_values.get(Tags.LENS_MAKE)
+        lens = tag_values.get(Tags.LENS)
+        width = tag_values.get(Tags.IMAGE_WIDTH)
+        height = tag_values.get(Tags.IMAGE_HEIGHT)
+        focal_length_35mm = tag_values.get(Tags.FOCAL_LENGTH_35MM)
+        video_length = tag_values.get(Tags.QUICKTIME_DURATION)
+        rating = tag_values.get(Tags.RATING)
+        subsec_time_original = tag_values.get(Tags.SUBSEC_TIME_ORIGINAL)
+        image_number = tag_values.get(Tags.IMAGE_NUMBER)
+        date_taken = tag_values.get(Tags.DATE_TIME_ORIGINAL) or tag_values.get(
+            Tags.QUICKTIME_CREATE_DATE
+        )
+        timezone_offset = tag_values.get(Tags.TIMEZONE_OFFSET)
+        gps_latitude = tag_values.get(Tags.LATITUDE)
+        gps_longitude = tag_values.get(Tags.LONGITUDE)
+        gps_altitude = tag_values.get(Tags.GPS_ALTITUDE)
+        title = tag_values.get(Tags.TITLE)
+        caption = tag_values.get(Tags.DESCRIPTION)
+        keywords = cls._normalize_keywords(
+            tag_values.get(Tags.SUBJECT) or tag_values.get(Tags.KEYWORDS_IPTC)
+        )
+        creator = tag_values.get(Tags.CREATOR)
+        copyright_value = tag_values.get(Tags.COPYRIGHT)
+        orientation = tag_values.get(Tags.ORIENTATION)
+        color_space = tag_values.get(Tags.COLOR_SPACE)
+        bit_depth = tag_values.get(Tags.BIT_DEPTH)
+        serial_number = tag_values.get(Tags.SERIAL_NUMBER)
+        date_modified = tag_values.get(Tags.FILE_MODIFY_DATE)
+
+        photo_update_fields = set()
+        metadata_update_fields = set()
+
         # Fields still on Photo model
-        if size and isinstance(size, numbers.Number):
+        if isinstance(size, numbers.Number):
             photo.size = size
-        if video_length and isinstance(video_length, numbers.Number):
+            photo_update_fields.add("size")
+        if isinstance(video_length, numbers.Number):
             photo.video_length = video_length
-        if rating and isinstance(rating, numbers.Number):
+            photo_update_fields.add("video_length")
+        if isinstance(rating, numbers.Number):
             photo.rating = rating
+            photo_update_fields.add("rating")
+        if isinstance(gps_latitude, numbers.Number):
+            photo.exif_gps_lat = float(gps_latitude)
+            photo_update_fields.add("exif_gps_lat")
+        if isinstance(gps_longitude, numbers.Number):
+            photo.exif_gps_lon = float(gps_longitude)
+            photo_update_fields.add("exif_gps_lon")
 
         # Burst/sequence detection fields
         if subsec_time_original:
             # SubSecTimeOriginal is typically a string like "123" representing milliseconds
             photo.exif_timestamp_subsec = str(subsec_time_original)[:10]
-        if image_number and isinstance(image_number, numbers.Number):
+            photo_update_fields.add("exif_timestamp_subsec")
+        if isinstance(image_number, numbers.Number):
             photo.image_sequence_number = int(image_number)
+            photo_update_fields.add("image_sequence_number")
 
-        if commit:
-            photo.save()
+        if commit and photo_update_fields:
+            photo.save(update_fields=sorted(photo_update_fields), save_metadata=False)
 
         # Store metadata in PhotoMetadata model
-        metadata, created = cls.objects.get_or_create(
+        metadata, _created = cls.objects.get_or_create(
             photo=photo, defaults={"source": cls.Source.EMBEDDED}
         )
 
-        if fstop and isinstance(fstop, numbers.Number):
-            metadata.aperture = fstop
-        if focal_length and isinstance(focal_length, numbers.Number):
-            metadata.focal_length = focal_length
-        if iso and isinstance(iso, numbers.Number):
-            metadata.iso = iso
-        if shutter_speed and isinstance(shutter_speed, numbers.Number):
-            metadata.shutter_speed = str(
-                Fraction(shutter_speed).limit_denominator(1000)
+        cls._set_if_present(metadata, "aperture", fstop, metadata_update_fields, overwrite)
+        cls._set_if_present(
+            metadata, "focal_length", focal_length, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(metadata, "iso", iso, metadata_update_fields, overwrite)
+        cls._set_if_present(
+            metadata,
+            "camera_make",
+            camera_make,
+            metadata_update_fields,
+            overwrite,
+        )
+        cls._set_if_present(
+            metadata, "camera_model", camera, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata, "lens_make", lens_make, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata, "lens_model", lens, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(metadata, "width", width, metadata_update_fields, overwrite)
+        cls._set_if_present(
+            metadata, "height", height, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata,
+            "focal_length_35mm",
+            focal_length_35mm,
+            metadata_update_fields,
+            overwrite,
+        )
+        cls._set_if_present(
+            metadata, "rating", rating, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata,
+            "date_taken",
+            date_taken,
+            metadata_update_fields,
+            overwrite,
+        )
+        cls._set_if_present(
+            metadata,
+            "timezone_offset",
+            timezone_offset,
+            metadata_update_fields,
+            overwrite,
+        )
+        if isinstance(gps_latitude, numbers.Number):
+            cls._set_if_present(
+                metadata,
+                "gps_latitude",
+                float(gps_latitude),
+                metadata_update_fields,
+                overwrite,
             )
-        if camera and isinstance(camera, str):
-            metadata.camera_model = camera
-        if lens and isinstance(lens, str):
-            metadata.lens_model = lens
-        if width and isinstance(width, numbers.Number):
-            metadata.width = width
-        if height and isinstance(height, numbers.Number):
-            metadata.height = height
-        if focalLength35Equivalent and isinstance(
-            focalLength35Equivalent, numbers.Number
-        ):
-            metadata.focal_length_35mm = focalLength35Equivalent
-        if rating and isinstance(rating, numbers.Number):
-            metadata.rating = rating
-        if subsec_time_original:
-            metadata.date_taken_subsec = str(subsec_time_original)[:10]
+        if isinstance(gps_longitude, numbers.Number):
+            cls._set_if_present(
+                metadata,
+                "gps_longitude",
+                float(gps_longitude),
+                metadata_update_fields,
+                overwrite,
+            )
+        if isinstance(gps_altitude, numbers.Number):
+            cls._set_if_present(
+                metadata,
+                "gps_altitude",
+                float(gps_altitude),
+                metadata_update_fields,
+                overwrite,
+            )
+        cls._set_if_present(metadata, "title", title, metadata_update_fields, overwrite)
+        cls._set_if_present(
+            metadata, "caption", caption, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata, "keywords", keywords, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata, "creator", creator, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata,
+            "copyright",
+            copyright_value,
+            metadata_update_fields,
+            overwrite,
+        )
+        cls._set_if_present(
+            metadata,
+            "orientation",
+            orientation,
+            metadata_update_fields,
+            overwrite,
+        )
+        cls._set_if_present(
+            metadata,
+            "color_space",
+            color_space,
+            metadata_update_fields,
+            overwrite,
+        )
+        cls._set_if_present(
+            metadata, "bit_depth", bit_depth, metadata_update_fields, overwrite
+        )
+        cls._set_if_present(
+            metadata,
+            "serial_number",
+            serial_number,
+            metadata_update_fields,
+            overwrite,
+        )
+        cls._set_if_present(
+            metadata,
+            "date_modified",
+            date_modified,
+            metadata_update_fields,
+            overwrite,
+        )
 
-        if commit:
-            metadata.save()
+        if isinstance(shutter_speed, numbers.Number):
+            cls._set_if_present(
+                metadata,
+                "shutter_speed_seconds",
+                float(shutter_speed),
+                metadata_update_fields,
+                overwrite,
+            )
+            cls._set_if_present(
+                metadata,
+                "shutter_speed",
+                str(Fraction(shutter_speed).limit_denominator(1000)),
+                metadata_update_fields,
+                overwrite,
+            )
+        elif isinstance(shutter_speed, str):
+            cls._set_if_present(
+                metadata,
+                "shutter_speed",
+                shutter_speed,
+                metadata_update_fields,
+                overwrite,
+            )
+
+        if subsec_time_original:
+            cls._set_if_present(
+                metadata,
+                "date_taken_subsec",
+                str(subsec_time_original)[:10],
+                metadata_update_fields,
+                overwrite,
+            )
+
+        if commit and metadata_update_fields:
+            metadata.save(update_fields=sorted(metadata_update_fields))
 
         return metadata
 

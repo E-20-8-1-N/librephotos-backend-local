@@ -213,6 +213,60 @@ class PhotoMetadataModelTestCase(TestCase):
         metadata.refresh_from_db()
         self.assertEqual(metadata.keywords, keywords)
 
+    @patch("api.models.photo_metadata.get_metadata")
+    def test_extract_exif_data_populates_rich_metadata(self, mock_get_metadata):
+        """Test full extraction populates GPS, timestamps, and descriptive fields."""
+        mock_get_metadata.return_value = [
+            12345,
+            1.8,
+            6.765,
+            125,
+            0.02,
+            "Apple",
+            "iPhone 15 Pro Max",
+            "Apple",
+            "iPhone 15 Pro Max back triple camera 6.765mm f/1.78",
+            5712,
+            4284,
+            24,
+            None,
+            None,
+            0,
+            5,
+            "073",
+            12,
+            "2026:03:24 10:20:30",
+            None,
+            "+08:00",
+            37.3317,
+            -122.0301,
+            15.0,
+            "Shot on iPhone",
+            "Cupertino campus",
+            ["apple", "campus"],
+            None,
+            "Ethan",
+            "Copyright 2026",
+            1,
+            "sRGB",
+            8,
+            "ABC123",
+            "2026:03:24 10:21:00",
+        ]
+
+        metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
+
+        self.assertEqual(metadata.camera_make, "Apple")
+        self.assertEqual(metadata.camera_model, "iPhone 15 Pro Max")
+        self.assertEqual(metadata.gps_latitude, 37.3317)
+        self.assertEqual(metadata.gps_longitude, -122.0301)
+        self.assertEqual(metadata.title, "Shot on iPhone")
+        self.assertEqual(metadata.caption, "Cupertino campus")
+        self.assertEqual(metadata.keywords, ["apple", "campus"])
+        self.assertEqual(metadata.creator, "Ethan")
+        self.assertEqual(metadata.shutter_speed, "1/50")
+        self.assertEqual(metadata.shutter_speed_seconds, 0.02)
+
 
 class MetadataFileModelTestCase(TestCase):
     """Tests for MetadataFile model."""
