@@ -14,10 +14,13 @@ Benefits over current approach:
 """
 
 import numbers
+import re
 import uuid
+from datetime import datetime
 from fractions import Fraction
 
 from django.db import models
+from django.utils.dateparse import parse_datetime
 
 from api.metadata.reader import get_metadata
 from api.metadata.tags import Tags
@@ -398,6 +401,12 @@ class PhotoMetadata(models.Model):
     def _normalize_keywords(value):
         if value is None:
             return None
+        if isinstance(value, dict):
+            for dict_value in value.values():
+                normalized = PhotoMetadata._normalize_keywords(dict_value)
+                if normalized:
+                    return normalized
+            return None
         if isinstance(value, list):
             normalized = [str(item).strip() for item in value if str(item).strip()]
             return normalized or None
@@ -408,6 +417,165 @@ class PhotoMetadata(models.Model):
             stripped = value.strip()
             return [stripped] if stripped else None
         return None
+
+    @staticmethod
+    def _normalize_text(value, join_list=False):
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            preferred_keys = ("x-default", "en-US", "en", "und")
+            for key in preferred_keys:
+                preferred_value = value.get(key)
+                if preferred_value:
+                    return str(preferred_value).strip() or None
+
+            for dict_value in value.values():
+                normalized = PhotoMetadata._normalize_text(
+                    dict_value, join_list=join_list
+                )
+                if normalized:
+                    return normalized
+            return None
+        if isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+            if not items:
+                return None
+            return ", ".join(items) if join_list else items[0]
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _normalize_datetime(value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, list):
+            for item in value:
+                normalized = PhotoMetadata._normalize_datetime(item)
+                if normalized is not None:
+                    return normalized
+            return None
+        if isinstance(value, dict):
+            for item in value.values():
+                normalized = PhotoMetadata._normalize_datetime(item)
+                if normalized is not None:
+                    return normalized
+            return None
+
+        text_value = str(value).strip()
+        if not text_value:
+            return None
+
+        parsed_value = parse_datetime(text_value)
+        if parsed_value is not None:
+            return parsed_value
+
+        exif_formats = (
+            "%Y:%m:%d %H:%M:%S%z",
+            "%Y:%m:%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S%z",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        for exif_format in exif_formats:
+            try:
+                return datetime.strptime(text_value, exif_format)
+            except ValueError:
+                continue
+
+        return None
+
+    @staticmethod
+    def _normalize_float(value):
+        if value is None:
+            return None
+        if isinstance(value, numbers.Number):
+            return float(value)
+        if isinstance(value, list):
+            for item in value:
+                normalized = PhotoMetadata._normalize_float(item)
+                if normalized is not None:
+                    return normalized
+            return None
+        if isinstance(value, dict):
+            for item in value.values():
+                normalized = PhotoMetadata._normalize_float(item)
+                if normalized is not None:
+                    return normalized
+            return None
+
+        text_value = str(value).strip()
+        if not text_value:
+            return None
+        if "/" in text_value:
+            try:
+                return float(Fraction(text_value))
+            except (ValueError, ZeroDivisionError):
+                pass
+
+        match = re.search(r"-?\d+(?:\.\d+)?", text_value)
+        if match:
+            try:
+                return float(match.group(0))
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _normalize_int(value):
+        normalized = PhotoMetadata._normalize_float(value)
+        if normalized is None:
+            return None
+        return int(normalized)
+
+    @classmethod
+    def _normalize_exif_values(cls, values):
+        values = dict(values)
+
+        for key in ("fstop", "focal_length", "video_length", "latitude", "longitude", "gps_altitude"):
+            values[key] = cls._normalize_float(values[key])
+
+        for key in (
+            "size",
+            "iso",
+            "width",
+            "height",
+            "focal_length_35mm",
+            "rating",
+            "image_number",
+            "orientation",
+            "bit_depth",
+        ):
+            values[key] = cls._normalize_int(values[key])
+
+        for key in (
+            "camera_make",
+            "camera",
+            "lens_make",
+            "lens",
+            "subsec_time_original",
+            "timezone_offset",
+            "title",
+            "xmp_description",
+            "copyright",
+            "color_space",
+            "serial_number",
+        ):
+            values[key] = cls._normalize_text(values[key])
+
+        values["creator"] = cls._normalize_text(values["creator"], join_list=True)
+        values["date_time_original"] = cls._normalize_datetime(
+            values["date_time_original"]
+        )
+        values["quicktime_create_date"] = cls._normalize_datetime(
+            values["quicktime_create_date"]
+        )
+        values["file_modify_date"] = cls._normalize_datetime(
+            values["file_modify_date"]
+        )
+        values["xmp_subject"] = cls._normalize_keywords(values["xmp_subject"])
+        values["iptc_keywords"] = cls._normalize_keywords(values["iptc_keywords"])
+        return values
 
     @classmethod
     def extract_exif_data(cls, photo, commit=True, overwrite=True, try_sidecar=True):
@@ -440,6 +608,7 @@ class PhotoMetadata(models.Model):
                 ),
             )
         )
+        values = cls._normalize_exif_values(values)
 
         photo_update_fields = cls._apply_to_photo(photo, values)
         if commit and photo_update_fields:
