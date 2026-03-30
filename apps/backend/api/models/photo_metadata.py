@@ -55,6 +55,7 @@ EXIF_VALUE_NAMES = (
     "longitude",
     "gps_altitude",
     "title",
+    "image_description",
     "xmp_description",
     "xmp_subject",
     "iptc_keywords",
@@ -93,6 +94,7 @@ EXIF_TAGS = [
     Tags.LONGITUDE,
     Tags.GPS_ALTITUDE,
     Tags.TITLE,
+    Tags.IMAGE_DESCRIPTION,
     Tags.DESCRIPTION,
     Tags.SUBJECT,
     Tags.IPTC_KEYWORDS,
@@ -556,6 +558,7 @@ class PhotoMetadata(models.Model):
             "subsec_time_original",
             "timezone_offset",
             "title",
+            "image_description",
             "xmp_description",
             "copyright",
             "color_space",
@@ -685,7 +688,6 @@ class PhotoMetadata(models.Model):
             ("lens_model", "lens"),
             ("timezone_offset", "timezone_offset"),
             ("title", "title"),
-            ("caption", "xmp_description"),
             ("creator", "creator"),
             ("copyright", "copyright"),
             ("color_space", "color_space"),
@@ -695,6 +697,13 @@ class PhotoMetadata(models.Model):
             cls._set_if_present(
                 metadata, field, values[name], update_fields, overwrite
             )
+
+        caption = values["image_description"]
+        if caption is None:
+            caption = values["xmp_description"]
+        cls._set_if_present(
+            metadata, "caption", caption, update_fields, overwrite
+        )
 
         date_taken = values["date_time_original"] or values["quicktime_create_date"]
         cls._set_if_present(
