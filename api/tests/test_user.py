@@ -1,4 +1,5 @@
 import logging
+import tempfile
 from unittest.mock import patch
 
 from constance.test import override_config
@@ -267,3 +268,40 @@ class UserTest(TestCase):
         )
         data = response.json()
         self.assertNotEqual("/data", data["scan_directory"])
+
+    @patch("api.signals.do_all_models_exist", return_value=True)
+    @patch("api.signals.Chain")
+    def test_new_user_with_existing_scan_directory_triggers_scan(
+        self, mock_chain_cls, _mock_do_all_models_exist
+    ):
+        with tempfile.TemporaryDirectory() as scan_directory:
+            mock_chain = mock_chain_cls.return_value
+
+            user = User.objects.create_user(
+                username="autoscanuser",
+                email="autoscan@example.com",
+                password="testpass123",
+                scan_directory=scan_directory,
+            )
+
+        mock_chain.append.assert_called_once()
+        append_args = mock_chain.append.call_args.args
+        self.assertEqual(append_args[0].__name__, "scan_photos")
+        self.assertEqual(append_args[1], user)
+        self.assertFalse(append_args[2])
+        self.assertEqual(append_args[4], scan_directory)
+        mock_chain.run.assert_called_once()
+
+    @patch("api.signals.do_all_models_exist", return_value=True)
+    @patch("api.signals.Chain")
+    def test_new_user_without_existing_scan_directory_does_not_trigger_scan(
+        self, mock_chain_cls, _mock_do_all_models_exist
+    ):
+        User.objects.create_user(
+            username="noscanuser",
+            email="noscan@example.com",
+            password="testpass123",
+            scan_directory="/path/that/does/not/exist",
+        )
+
+        mock_chain_cls.assert_not_called()
