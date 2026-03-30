@@ -486,6 +486,7 @@ class PhotoMetadata(models.Model):
             Tags.LONGITUDE,
             Tags.GPS_ALTITUDE,
             Tags.TITLE,
+            Tags.IMAGE_DESCRIPTION,
             Tags.DESCRIPTION,
             Tags.SUBJECT,
             Tags.KEYWORDS_IPTC,
@@ -533,7 +534,11 @@ class PhotoMetadata(models.Model):
         gps_longitude = cls._normalize_float(tag_values.get(Tags.LONGITUDE))
         gps_altitude = cls._normalize_float(tag_values.get(Tags.GPS_ALTITUDE))
         title = cls._normalize_text(tag_values.get(Tags.TITLE))
-        caption = cls._normalize_text(tag_values.get(Tags.DESCRIPTION))
+        image_description = tag_values.get(Tags.IMAGE_DESCRIPTION)
+        if image_description is not None:
+            caption = cls._normalize_text(image_description)
+        else:
+            caption = cls._normalize_text(tag_values.get(Tags.DESCRIPTION))
         keywords = cls._normalize_keywords(
             tag_values.get(Tags.SUBJECT) or tag_values.get(Tags.KEYWORDS_IPTC)
         )
