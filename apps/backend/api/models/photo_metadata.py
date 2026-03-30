@@ -56,6 +56,7 @@ EXIF_VALUE_NAMES = (
     "gps_altitude",
     "title",
     "image_description",
+    "keys_description",
     "xmp_description",
     "xmp_subject",
     "iptc_keywords",
@@ -95,6 +96,7 @@ EXIF_TAGS = [
     Tags.GPS_ALTITUDE,
     Tags.TITLE,
     Tags.IMAGE_DESCRIPTION,
+    Tags.KEYS_DESCRIPTION,
     Tags.DESCRIPTION,
     Tags.SUBJECT,
     Tags.IPTC_KEYWORDS,
@@ -559,6 +561,7 @@ class PhotoMetadata(models.Model):
             "timezone_offset",
             "title",
             "image_description",
+            "keys_description",
             "xmp_description",
             "copyright",
             "color_space",
@@ -701,6 +704,8 @@ class PhotoMetadata(models.Model):
         caption = values["image_description"]
         if caption is None:
             caption = values["xmp_description"]
+        if caption is None:
+            caption = values["keys_description"]
         cls._set_if_present(
             metadata, "caption", caption, update_fields, overwrite
         )
