@@ -623,7 +623,9 @@ class PhotoMetadata(models.Model):
         metadata, _ = cls.objects.get_or_create(
             photo=photo, defaults={"source": cls.Source.EMBEDDED}
         )
-        metadata_update_fields = cls._apply_to_metadata(metadata, values, overwrite)
+        metadata_update_fields = cls._apply_to_metadata(
+            metadata, values, overwrite, photo.video
+        )
 
         if commit and metadata_update_fields:
             metadata.save(update_fields=sorted(metadata_update_fields))
@@ -663,7 +665,7 @@ class PhotoMetadata(models.Model):
         return update_fields
 
     @classmethod
-    def _apply_to_metadata(cls, metadata, values, overwrite):
+    def _apply_to_metadata(cls, metadata, values, overwrite, is_video):
         """Populate the PhotoMetadata columns from the extracted EXIF values."""
         update_fields = set()
         for field, name in (
@@ -701,11 +703,11 @@ class PhotoMetadata(models.Model):
                 metadata, field, values[name], update_fields, overwrite
             )
 
-        caption = values["image_description"]
+        caption = (
+            values["keys_description"] if is_video else values["image_description"]
+        )
         if caption is None:
             caption = values["xmp_description"]
-        if caption is None:
-            caption = values["keys_description"]
         cls._set_if_present(
             metadata, "caption", caption, update_fields, overwrite
         )
