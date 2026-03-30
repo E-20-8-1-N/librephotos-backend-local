@@ -487,6 +487,7 @@ class PhotoMetadata(models.Model):
             Tags.GPS_ALTITUDE,
             Tags.TITLE,
             Tags.IMAGE_DESCRIPTION,
+            Tags.KEYS_DESCRIPTION,
             Tags.DESCRIPTION,
             Tags.SUBJECT,
             Tags.IPTC_KEYWORDS,
@@ -537,8 +538,10 @@ class PhotoMetadata(models.Model):
         image_description = tag_values.get(Tags.IMAGE_DESCRIPTION)
         if image_description is not None:
             caption = cls._normalize_text(image_description)
-        else:
+        elif tag_values.get(Tags.DESCRIPTION) is not None:
             caption = cls._normalize_text(tag_values.get(Tags.DESCRIPTION))
+        else:
+            caption = cls._normalize_text(tag_values.get(Tags.KEYS_DESCRIPTION))
         xmp_subject = tag_values.get(Tags.SUBJECT)
         iptc_keywords = tag_values.get(Tags.IPTC_KEYWORDS)
         keywords = cls._normalize_keywords(

@@ -259,6 +259,7 @@ class Photo(models.Model):
             if should_write_metadata_field("caption"):
                 tags_to_write[Tags.IMAGE_DESCRIPTION] = metadata.caption or ""
                 tags_to_write[Tags.DESCRIPTION] = metadata.caption or ""
+                tags_to_write[Tags.KEYS_DESCRIPTION] = metadata.caption or ""
                 tags_to_write[Tags.DESCRIPTION_WRITE] = metadata.caption or ""
                 tags_to_write[Tags.DESCRIPTION_IPTC_WRITE] = metadata.caption or ""
             if should_write_metadata_field("keywords"):
