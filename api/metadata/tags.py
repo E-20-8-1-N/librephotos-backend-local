@@ -32,9 +32,9 @@ class Tags:
     TITLE = "XMP:Title"
     TITLE_WRITE = "XMP-dc:Title"
     TITLE_IPTC_WRITE = "IPTC:ObjectName"
-    IMAGE_DESCRIPTION = "EXIF:ImageDescription"
+    IMAGE_DESCRIPTION = "EXIF:ImageDescription" # Image
+    KEYS_DESCRIPTION = "Keys:Description" # Video
     DESCRIPTION = "XMP:Description"
-    KEYS_DESCRIPTION = "Keys:Description"
     DESCRIPTION_WRITE = "XMP-dc:Description"
     DESCRIPTION_IPTC_WRITE = "IPTC:Caption-Abstract"
     COPYRIGHT = "EXIF:Copyright"

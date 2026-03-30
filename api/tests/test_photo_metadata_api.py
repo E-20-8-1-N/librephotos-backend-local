@@ -120,6 +120,9 @@ class PhotoMetadataRetrieveTestCase(APITestCase):
         self, mock_get_metadata
     ):
         """Test GET metadata exposes MP4 captions stored in Keys:Description."""
+        self.photo.video = True
+        self.photo.save(update_fields=["video"], save_metadata=False)
+
         mock_get_metadata.return_value = [
             12345,
             None,
@@ -277,9 +280,37 @@ class PhotoMetadataUpdateTestCase(APITestCase):
         mock_write_metadata.assert_called_once()
         written_tags = mock_write_metadata.call_args.args[1]
         self.assertEqual(
+            written_tags["EXIF:ImageDescription"],
+            "A beautiful sunset over the mountains",
+        )
+        self.assertNotIn("Keys:Description", written_tags)
+        self.assertEqual(
             written_tags["XMP-dc:Description"],
             "A beautiful sunset over the mountains",
         )
+
+    @patch("api.models.photo.write_metadata")
+    def test_update_video_metadata_caption_writes_keys_description(
+        self, mock_write_metadata
+    ):
+        """Test updating video caption writes Keys:Description instead of EXIF:ImageDescription."""
+        self.user.save_metadata_to_disk = self.user.SaveMetadata.SIDECAR_FILE
+        self.user.save()
+        self.photo.video = True
+        self.photo.save(update_fields=["video"], save_metadata=False)
+
+        response = self.client.patch(
+            f"/api/photos/{self.photo.pk}/metadata/",
+            {"caption": "iPhone Video - TEST"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_write_metadata.assert_called_once()
+        written_tags = mock_write_metadata.call_args.args[1]
+        self.assertEqual(written_tags["Keys:Description"], "iPhone Video - TEST")
+        self.assertNotIn("EXIF:ImageDescription", written_tags)
+        self.assertEqual(written_tags["XMP-dc:Description"], "iPhone Video - TEST")
 
         edit = MetadataEdit.objects.filter(photo=self.photo, field_name="caption").latest(
             "created_at"
@@ -516,6 +547,8 @@ class PhotoMetadataRevertTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         mock_write_metadata.assert_called_once()
         written_tags = mock_write_metadata.call_args.args[1]
+        self.assertEqual(written_tags["EXIF:ImageDescription"], "Original caption")
+        self.assertNotIn("Keys:Description", written_tags)
         self.assertEqual(written_tags["XMP-dc:Description"], "Original caption")
 
         revert_edit = MetadataEdit.objects.filter(
