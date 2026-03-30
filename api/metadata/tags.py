@@ -34,6 +34,7 @@ class Tags:
     TITLE_IPTC_WRITE = "IPTC:ObjectName"
     IMAGE_DESCRIPTION = "EXIF:ImageDescription"
     DESCRIPTION = "XMP:Description"
+    KEYS_DESCRIPTION = "Keys:Description"
     DESCRIPTION_WRITE = "XMP-dc:Description"
     DESCRIPTION_IPTC_WRITE = "IPTC:Caption-Abstract"
     COPYRIGHT = "EXIF:Copyright"

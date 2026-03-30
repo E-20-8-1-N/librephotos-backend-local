@@ -104,6 +104,7 @@ class PhotoMetadataRetrieveTestCase(APITestCase):
             8,
             "ABC123",
             "2026:03:24 10:21:00",
+            None,
         ]
 
         response = self.client.get(f"/api/photos/{self.photo.pk}/metadata/")
@@ -113,6 +114,57 @@ class PhotoMetadataRetrieveTestCase(APITestCase):
         self.assertEqual(response.data["gps_longitude"], -122.0301)
         self.assertEqual(response.data["title"], "Shot on iPhone")
         self.assertEqual(response.data["caption"], "Cupertino campus")
+
+    @patch("api.models.photo_metadata.get_metadata")
+    def test_get_metadata_reads_video_caption_from_keys_description(
+        self, mock_get_metadata
+    ):
+        """Test GET metadata exposes MP4 captions stored in Keys:Description."""
+        mock_get_metadata.return_value = [
+            12345,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            608,
+            1080,
+            None,
+            None,
+            3.2,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "2026:03:30 04:26:47",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "2026:03:30 05:23:20",
+            "caption-from-macOS",
+        ]
+
+        response = self.client.get(f"/api/photos/{self.photo.pk}/metadata/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["caption"], "caption-from-macOS")
+        self.assertEqual(response.data["width"], 608)
+        self.assertEqual(response.data["height"], 1080)
 
     def test_get_metadata_nonexistent_photo(self):
         """Test 404 for nonexistent photo."""
@@ -547,6 +599,7 @@ class PhotoMetadataRevertAllTestCase(APITestCase):
             8,
             "ABC123",
             "2026:03:24 10:21:00",
+            None,
         ]
 
         response = self.client.post(f"/api/photos/{self.photo.pk}/metadata/revert-all/")

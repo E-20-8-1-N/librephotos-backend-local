@@ -252,6 +252,7 @@ class PhotoMetadataModelTestCase(TestCase):
             8,
             "ABC123",
             "2026:03:24 10:21:00",
+            None,
         ]
 
         metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
@@ -306,6 +307,7 @@ class PhotoMetadataModelTestCase(TestCase):
             "8 bits",
             ["ABC123"],
             "2026:03:24 10:21:00-07:00",
+            None,
         ]
 
         metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
@@ -322,6 +324,56 @@ class PhotoMetadataModelTestCase(TestCase):
         self.assertEqual(metadata.bit_depth, 8)
         self.assertIsNotNone(metadata.date_taken)
         self.assertIsNotNone(metadata.date_modified)
+
+    @patch("api.models.photo_metadata.get_metadata")
+    def test_extract_exif_data_uses_keys_description_for_video_caption(
+        self, mock_get_metadata
+    ):
+        """Test video captions fall back to Keys:Description when EXIF/XMP are absent."""
+        mock_get_metadata.return_value = [
+            12345,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            608,
+            1080,
+            None,
+            None,
+            None,
+            3.2,
+            None,
+            None,
+            None,
+            None,
+            "2026:03:30 04:26:47",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "2026:03:30 05:23:20",
+            "caption-from-macOS",
+        ]
+
+        metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
+
+        self.assertEqual(metadata.caption, "caption-from-macOS")
+        self.assertEqual(metadata.width, 608)
+        self.assertEqual(metadata.height, 1080)
 
 
 class MetadataFileModelTestCase(TestCase):
