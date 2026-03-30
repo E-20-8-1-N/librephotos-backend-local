@@ -12,6 +12,8 @@ class ApiConfig(AppConfig):
     verbose_name = "LibrePhotos"
 
     def ready(self):
+        from api import signals  # noqa: F401
+
         # This is the first point in the boot where logging is fully configured,
         # so anything the settings module noticed while building that
         # configuration gets reported here rather than lost.
