@@ -10,6 +10,7 @@ class ApiConfig(AppConfig):
     verbose_name = "LibrePhotos"
 
     def ready(self):
+        from api import signals  # noqa: F401
         from api.util import reconfigure_logging
 
         try:
