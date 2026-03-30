@@ -431,7 +431,10 @@ class PhotoMetadataModelTestCase(TestCase):
     def test_extract_exif_data_uses_keys_description_for_video_caption(
         self, mock_get_metadata
     ):
-        """Test video captions fall back to Keys:Description when EXIF/XMP are absent."""
+        """Test video captions read from Keys:Description."""
+        self.photo.video = True
+        self.photo.save(update_fields=["video"], save_metadata=False)
+
         mock_get_metadata.return_value = [
             12345,
             None,
