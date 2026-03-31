@@ -6,6 +6,7 @@ from unittest.mock import patch
 from django.test import TestCase, override_settings
 
 from api.directory_watcher import scan_photos
+from api.directory_watcher.utils import walk_directory
 from api.tests.utils import create_test_user
 
 
@@ -61,3 +62,30 @@ class ScanPhotosDirectoryCreationTest(TestCase):
                     os.path.isdir(directory_path),
                     msg=f"Expected directory {directory_path} to exist",
                 )
+
+
+class ScanPhotosDirectoryWalkTest(TestCase):
+    def test_walk_directory_includes_cetapod_share(self):
+        with tempfile.TemporaryDirectory() as scan_root:
+            allowed_hidden_dir = os.path.join(scan_root, ".cetapod_share")
+            skipped_hidden_dir = os.path.join(scan_root, ".hidden")
+            visible_dir = os.path.join(scan_root, "visible")
+
+            os.makedirs(allowed_hidden_dir, exist_ok=True)
+            os.makedirs(skipped_hidden_dir, exist_ok=True)
+            os.makedirs(visible_dir, exist_ok=True)
+
+            allowed_file = os.path.join(allowed_hidden_dir, "shared.jpg")
+            skipped_file = os.path.join(skipped_hidden_dir, "hidden.jpg")
+            visible_file = os.path.join(visible_dir, "visible.jpg")
+
+            for file_path in (allowed_file, skipped_file, visible_file):
+                with open(file_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write("test")
+
+            collected_paths = []
+            walk_directory(scan_root, collected_paths)
+
+            self.assertIn(allowed_file, collected_paths)
+            self.assertIn(visible_file, collected_paths)
+            self.assertNotIn(skipped_file, collected_paths)
