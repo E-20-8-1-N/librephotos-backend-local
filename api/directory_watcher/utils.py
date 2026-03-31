@@ -12,6 +12,13 @@ from django.utils import timezone
 from api.models import LongRunningJob
 
 
+ALLOWED_HIDDEN_SCAN_DIRECTORIES = [".cetapod_share"]
+
+
+def _is_allowed_hidden_path(path):
+    return os.path.basename(os.path.abspath(path)) in ALLOWED_HIDDEN_SCAN_DIRECTORIES
+
+
 def should_skip(path):
     """Check if a path should be skipped based on configured patterns."""
     if not site_config.SKIP_PATTERNS:
@@ -29,6 +36,8 @@ if os.name == "Windows":
 
     def is_hidden(path):
         """Check if a file is hidden (Windows version)."""
+        if _is_allowed_hidden_path(path):
+            return False
         name = os.path.basename(os.path.abspath(path))
         return name.startswith(".") or _has_hidden_attribute(path)
 
@@ -43,6 +52,8 @@ else:
 
     def is_hidden(path):
         """Check if a file is hidden (Unix version - starts with dot)."""
+        if _is_allowed_hidden_path(path):
+            return False
         return os.path.basename(path).startswith(".")
     
     def is_pdf(path):
