@@ -44,6 +44,8 @@ from api.serializers.album_user import AlbumUserEditSerializer, AlbumUserListSer
 from api.util import logger
 from api.views.pagination import StandardResultsSetPagination
 
+# --- Configuration (from Environment Variables) ---
+USER_HOME_DIRECTORY_PREFIX = os.getenv("USER_HOME_DIRECTORY_PREFIX", "/data/pool/home/")
 
 def custom_exception_handler(exc, context):
     # Call REST framework's default exception handler first,
@@ -108,6 +110,63 @@ class AlbumUserEditViewSet(viewsets.ModelViewSet):
 
 
 # API Views
+def get_user_from_path(raw_path, user_home_directory_prefix):
+    if not raw_path or not isinstance(raw_path, str):
+        return None, None, Response(
+            {"status": False, "message": "Missing or invalid 'path'"},
+            status=400,
+        )
+
+    abs_path = os.path.abspath(raw_path)
+    
+    # Enforce fixed prefix
+    prefix = os.path.abspath(user_home_directory_prefix) + os.sep
+    if not abs_path.startswith(prefix):
+        return None, None, Response(
+            {
+                "status": False,
+                "message": f"Path must be under {user_home_directory_prefix}",
+            },
+            status=403,
+        )
+
+    if not os.path.exists(abs_path):
+        return None, None, Response(
+            {"status": False, "message": "Path does not exist"},
+            status=400,
+        )
+
+    # Extract username from /data/pool/home/<username>/...
+    rel = abs_path[len(prefix) :]
+    parts = rel.split(os.sep)
+    if not parts or not parts[0]:
+        return None, None, Response(
+            {"status": False, "message": "Could not determine username from path"},
+            status=400,
+        )
+
+    username = parts[0]
+    user_model = get_user_model()
+    user = user_model.objects.filter(username=username).first()
+    if not user:
+        return None, None, Response(
+            {"status": False, "message": f"User '{username}' not found"},
+            status=404,
+        )
+
+    # Ensure user's scan_directory matches the derived home
+    expected_scan_dir = os.path.join(os.path.abspath(user_home_directory_prefix), username)
+    if os.path.abspath(user.scan_directory) != os.path.abspath(expected_scan_dir):
+        return None, None, Response(
+            {
+                "status": False,
+                "message": "User scan_directory does not match derived home directory",
+            },
+            status=403,
+        )
+
+    return user, abs_path, None
+
 class BackendScanPhotosView(APIView):
     """
     No-auth endpoint. Accepts {"path": "/data/pool/home/user01/img01.jpg"}.
@@ -116,8 +175,6 @@ class BackendScanPhotosView(APIView):
     for that user only.
     """
     permission_classes = [AllowAny]
-
-    HOME_PREFIX = "/data/pool/home/"
 
     @extend_schema(
         request={
@@ -142,60 +199,11 @@ class BackendScanPhotosView(APIView):
 
     def _scan_photos(self, request):
         raw_path = (request.data or {}).get("path")
-        if not raw_path or not isinstance(raw_path, str):
-            return Response(
-                {"status": False, "message": "Missing or invalid 'path'"},
-                status=400,
-            )
-
-        # Normalize + basic traversal protection
-        abs_path = os.path.abspath(raw_path)
-
-        # Enforce fixed prefix
-        prefix = os.path.abspath(self.HOME_PREFIX) + os.sep
-        if not abs_path.startswith(prefix):
-            return Response(
-                {
-                    "status": False,
-                    "message": f"Path must be under {self.HOME_PREFIX}",
-                },
-                status=403,
-            )
-
-        if not os.path.exists(abs_path):
-            return Response(
-                {"status": False, "message": "Path does not exist"},
-                status=400,
-            )
-
-        # Extract username from /data/pool/home/<username>/...
-        rel = abs_path[len(prefix) :]
-        parts = rel.split(os.sep)
-        if not parts or not parts[0]:
-            return Response(
-                {"status": False, "message": "Could not determine username from path"},
-                status=400,
-            )
-        username = parts[0]
-
-        User = get_user_model()
-        user = User.objects.filter(username=username).first()
-        if not user:
-            return Response(
-                {"status": False, "message": f"User '{username}' not found"},
-                status=404,
-            )
-
-        # Ensure user's scan_directory matches the derived home
-        expected_scan_dir = os.path.join(os.path.abspath(self.HOME_PREFIX), username)
-        if os.path.abspath(user.scan_directory) != os.path.abspath(expected_scan_dir):
-            return Response(
-                {
-                    "status": False,
-                    "message": "User scan_directory does not match derived home directory",
-                },
-                status=403,
-            )
+        user, abs_path, error_response = get_user_from_path(
+            raw_path, USER_HOME_DIRECTORY_PREFIX
+        )
+        if error_response is not None:
+            return error_response
 
         try:
             chain = Chain()
@@ -210,7 +218,7 @@ class BackendScanPhotosView(APIView):
                 {
                     "status": True,
                     "job_id": str(job_id),
-                    "username": username,
+                    "username": user.username,
                     "scan_directory": user.scan_directory,
                     "path": abs_path,
                 }
@@ -218,6 +226,62 @@ class BackendScanPhotosView(APIView):
         except Exception:
             logger.exception("Backend scan failed")
             return Response({"status": False, "message": "Scan failed"}, status=500)
+
+class BackendDeleteMissingPhotosView(APIView):
+    """
+    No-auth endpoint. Accepts {"path": "/data/pool/home/user01/img01.jpg"}.
+
+    Derives username ("user01") from path and deletes missing photos for that user
+    only, scoped to the user's configured scan directory.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            }
+        },
+        responses={200: dict},
+    )
+    def post(self, request, format=None):
+        return self._delete_missing_photos(request)
+
+    @extend_schema(
+        deprecated=True,
+        description="Use POST method instead",
+    )
+    def get(self, request, format=None):
+        return self._delete_missing_photos(request)
+
+    def _delete_missing_photos(self, request):
+        raw_path = (request.data or {}).get("path")
+        user, abs_path, error_response = get_user_from_path(
+            raw_path, USER_HOME_DIRECTORY_PREFIX
+        )
+        if error_response is not None:
+            return error_response
+
+        try:
+            job_id = uuid.uuid4()
+            delete_missing_photos(user, job_id)
+            return Response(
+                {
+                    "status": True,
+                    "job_id": str(job_id),
+                    "username": user.username,
+                    "path": abs_path,
+                }
+            )
+        except Exception:
+            logger.exception("Backend delete missing photos failed")
+            return Response(
+                {"status": False, "message": "Delete missing photos failed"},
+                status=500,
+            )
 
 class SiteSettingsView(APIView):
     def get_permissions(self):
