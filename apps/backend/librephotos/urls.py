@@ -262,6 +262,10 @@ urlpatterns = [
     re_path(r"^api/deletemissingphotos", views.DeleteMissingPhotosView.as_view()),
     re_path(r"^api/classifymedia", views.ClassifyMediaView.as_view()),
     re_path(r"^api/generateocr", views.GenerateOcrView.as_view()),
+    re_path(
+        r"^api/backenddeletemissingphotos",
+        views.BackendDeleteMissingPhotosView.as_view(),
+    ),
     re_path(r"^api/autoalbumgen", album_auto.AutoAlbumGenerateView.as_view()),
     re_path(r"^api/autoalbumtitlegen", album_auto.RegenerateAutoAlbumTitles.as_view()),
     # Photo Stacks - Organizational grouping (bursts, brackets, manual)
