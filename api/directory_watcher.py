@@ -32,6 +32,7 @@ from api.models.file import (
     is_video,
 )
 
+DEFAULT_SCAN_SKIP_EXTENSIONS = ".pdf,.mkv,.avi,.wmv,.flv"
 
 def should_skip(path):
     if not site_config.SKIP_PATTERNS:
@@ -43,6 +44,19 @@ def should_skip(path):
 
     res = [ele for ele in skip_list if (ele in path)]
     return bool(res)
+
+def get_skipped_scan_extensions():
+    configured_extensions = getattr(
+        site_config, "SCAN_SKIP_EXTENSIONS", DEFAULT_SCAN_SKIP_EXTENSIONS
+    )
+    return {
+        ext if ext.startswith(".") else f".{ext}"
+        for ext in (value.strip().lower() for value in configured_extensions.split(","))
+        if ext
+    }
+
+def has_skipped_extension(path):
+    return os.path.splitext(path)[1].lower() in get_skipped_scan_extensions()
 
 
 if os.name == "Windows":
@@ -61,9 +75,6 @@ else:
 
     def is_hidden(path):
         return os.path.basename(path).startswith(".")
-    
-    def is_pdf(path):
-        return os.path.basename(path).endswith(".pdf")
 
 
 def create_new_image(user, path) -> Photo | None:
@@ -250,7 +261,7 @@ def handle_new_image(user, path, job_id, photo=None):
 def walk_directory(directory, callback):
     for file in os.scandir(directory):
         fpath = os.path.join(directory, file)
-        if not is_hidden(fpath) and not should_skip(fpath) and not is_pdf(fpath):
+        if not is_hidden(fpath) and not should_skip(fpath) and not has_skipped_extension(fpath):
             if os.path.isdir(fpath):
                 walk_directory(fpath, callback)
             else:
@@ -259,7 +270,7 @@ def walk_directory(directory, callback):
 
 def walk_files(scan_files, callback):
     for fpath in scan_files:
-        if os.path.isfile(fpath) and not is_pdf(fpath):
+        if os.path.isfile(fpath) and not has_skipped_extension(fpath):
             callback.append(fpath)
 
 
