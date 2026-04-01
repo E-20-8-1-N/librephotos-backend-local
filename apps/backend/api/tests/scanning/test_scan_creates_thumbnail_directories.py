@@ -3,10 +3,11 @@ import tempfile
 import uuid
 from unittest.mock import patch
 
+from constance.test import override_config
 from django.test import TestCase, override_settings
 
 from api.directory_watcher import scan_photos
-from api.directory_watcher.utils import walk_directory
+from api.directory_watcher.utils import walk_directory, walk_files
 from api.tests.utils import create_test_user
 
 
@@ -89,3 +90,71 @@ class ScanPhotosDirectoryWalkTest(TestCase):
             self.assertIn(allowed_file, collected_paths)
             self.assertIn(visible_file, collected_paths)
             self.assertNotIn(skipped_file, collected_paths)
+
+    @override_config(SCAN_SKIP_EXTENSIONS=".pdf,.mkv,.avi,.wmv,.flv")
+    def test_walk_directory_skips_configured_extensions(self):
+        with tempfile.TemporaryDirectory() as scan_root:
+            visible_dir = os.path.join(scan_root, "visible")
+            os.makedirs(visible_dir, exist_ok=True)
+
+            kept_file = os.path.join(visible_dir, "kept.jpg")
+            skipped_files = [
+                os.path.join(visible_dir, "skip.pdf"),
+                os.path.join(visible_dir, "skip.mkv"),
+                os.path.join(visible_dir, "skip.AVI"),
+                os.path.join(visible_dir, "skip.wmv"),
+                os.path.join(visible_dir, "skip.FLV"),
+            ]
+
+            for file_path in [kept_file, *skipped_files]:
+                with open(file_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write("test")
+
+            collected_paths = []
+            walk_directory(scan_root, collected_paths)
+
+            self.assertIn(kept_file, collected_paths)
+            for skipped_file in skipped_files:
+                self.assertNotIn(skipped_file, collected_paths)
+
+    @override_config(SCAN_SKIP_EXTENSIONS=".pdf,.mkv,.avi,.wmv,.flv")
+    def test_walk_files_skips_configured_extensions(self):
+        with tempfile.TemporaryDirectory() as scan_root:
+            kept_file = os.path.join(scan_root, "kept.jpg")
+            skipped_files = [
+                os.path.join(scan_root, "skip.pdf"),
+                os.path.join(scan_root, "skip.mkv"),
+                os.path.join(scan_root, "skip.avi"),
+                os.path.join(scan_root, "skip.WMV"),
+                os.path.join(scan_root, "skip.flv"),
+            ]
+
+            for file_path in [kept_file, *skipped_files]:
+                with open(file_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write("test")
+
+            collected_paths = []
+            walk_files([kept_file, *skipped_files], collected_paths)
+
+            self.assertEqual(collected_paths, [kept_file])
+
+    @override_config(SCAN_SKIP_EXTENSIONS="pdf,avi")
+    def test_walk_files_uses_runtime_configured_extensions(self):
+        with tempfile.TemporaryDirectory() as scan_root:
+            kept_files = [
+                os.path.join(scan_root, "keep.jpg"),
+                os.path.join(scan_root, "keep.mkv"),
+            ]
+            skipped_files = [
+                os.path.join(scan_root, "skip.pdf"),
+                os.path.join(scan_root, "skip.AVI"),
+            ]
+
+            for file_path in [*kept_files, *skipped_files]:
+                with open(file_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write("test")
+
+            collected_paths = []
+            walk_files([*kept_files, *skipped_files], collected_paths)
+
+            self.assertEqual(collected_paths, kept_files)
