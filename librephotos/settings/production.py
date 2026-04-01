@@ -167,6 +167,11 @@ CONSTANCE_CONFIG = {
         "Comma delimited list of patterns to ignore (e.g. '@eaDir,#recycle' for synology devices)",
         str,
     ),
+    "SCAN_SKIP_EXTENSIONS": (
+        os.environ.get("SCAN_SKIP_EXTENSIONS", ".pdf,.mkv,.avi,.wmv,.flv"),
+        "Comma delimited list of file extensions to exclude from scanning",
+        str,
+    ),
     "MAP_API_PROVIDER": (
         os.environ.get("MAP_API_PROVIDER", "photon"),
         "Map Provider",
