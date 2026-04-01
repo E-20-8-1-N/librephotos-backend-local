@@ -35,6 +35,7 @@ def _exceeds_failure_threshold(error_count: int, target: int) -> bool:
 
 
 ALLOWED_HIDDEN_SCAN_DIRECTORIES = [".cetapod_share"]
+DEFAULT_SCAN_SKIP_EXTENSIONS = ".pdf,.mkv,.avi,.wmv,.flv"
 
 
 def _is_allowed_hidden_path(path):
@@ -54,8 +55,21 @@ def should_skip(path):
     return bool(res)
 
 
-def is_pdf(path):
-    return os.path.splitext(path)[1].lower() == ".pdf"
+def get_skipped_scan_extensions():
+    """Return configured file extensions excluded from scan collection."""
+    configured_extensions = getattr(
+        site_config, "SCAN_SKIP_EXTENSIONS", DEFAULT_SCAN_SKIP_EXTENSIONS
+    )
+    return {
+        ext if ext.startswith(".") else f".{ext}"
+        for ext in (value.strip().lower() for value in configured_extensions.split(","))
+        if ext
+    }
+
+
+def has_skipped_extension(path):
+    """Check whether a path matches a file extension excluded from scanning."""
+    return os.path.splitext(path)[1].lower() in get_skipped_scan_extensions()
 
 
 if os.name == "Windows":
@@ -99,7 +113,7 @@ def walk_directory(directory, callback):
     """
     for file in os.scandir(directory):
         fpath = os.path.join(directory, file)
-        if is_hidden(fpath) or should_skip(fpath) or is_pdf(fpath):
+        if is_hidden(fpath) or should_skip(fpath) or has_skipped_extension(fpath):
             continue
         if os.path.isdir(fpath):
             walk_directory(fpath, callback)
@@ -120,7 +134,7 @@ def walk_files(scan_files, callback):
         callback: List to append valid file paths to
     """
     for fpath in scan_files:
-        if os.path.isfile(fpath) and not is_pdf(fpath):
+        if os.path.isfile(fpath) and not has_skipped_extension(fpath):
             callback.append(fpath)
 
 
