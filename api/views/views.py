@@ -211,7 +211,7 @@ class BackendScanPhotosView(APIView):
                 chain.append(download_models, user)
 
             job_id = uuid.uuid4()
-            chain.append(scan_photos, user, False, job_id, user.scan_directory)
+            chain.append(scan_photos, user, True, job_id, user.scan_directory, [], True)
             chain.run()
 
             return Response(
@@ -641,15 +641,7 @@ class ScanUploadedPhotosView(APIView):
             chain.append(download_models, request.user)
         try:
             job_id = uuid.uuid4()
-            chain.append(
-                scan_photos,
-                request.user,
-                True,
-                job_id,
-                request.user.scan_directory,
-                [],
-                True,
-            )
+            chain.append(scan_photos, request.user, True, job_id, request.user.scan_directory, [], True)
             chain.run()
             return Response({"status": True, "job_id": job_id})
         except BaseException:
