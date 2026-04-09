@@ -628,6 +628,25 @@ class Photo(models.Model):
 
         # To-Do: Handle wrong file permissions
         return result
+            
+    def delete_duplicate(self, duplicate_path):
+        # To-Do: Handle wrong file permissions
+        for file in self.files.all():
+            if file.path == duplicate_path:
+                if not os.path.isfile(duplicate_path):
+                    logger.info(f"Path does not lead to a valid file: {duplicate_path}")
+                    self.files.remove(file)
+                    file.delete()
+                    self.save()
+                    return False
+                logger.info(f"Removing photo {duplicate_path}")
+                os.remove(duplicate_path)
+                self.files.remove(file)
+                self.save()
+                file.delete()
+                return True
+        logger.info(f"Path is not valid: {duplicate_path}")
+        return False
     
     def all_file_paths(self):
         """Return a list of all physical file paths linked to this Photo."""
@@ -710,39 +729,6 @@ class Photo(models.Model):
                 {Tags.ORIENTATION: combined},
                 use_sidecar=use_sidecar,
             )
-    def delete_duplicate(self, duplicate_path):
-        # To-Do: Handle wrong file permissions
-        for file in self.files.all():
-            if file.path == duplicate_path:
-                if not os.path.isfile(duplicate_path):
-                    logger.info(f"Path does not lead to a valid file: {duplicate_path}")
-                    self.files.remove(file)
-                    file.delete()
-                    self.save()
-                    return False
-                logger.info(f"Removing photo {duplicate_path}")
-                os.remove(duplicate_path)
-                self.files.remove(file)
-                self.save()
-                file.delete()
-                return True
-        logger.info(f"Path is not valid: {duplicate_path}")
-        return False
-    
-    def all_file_paths(self):
-        """Return a list of all physical file paths linked to this Photo."""
-        return [f.path for f in self.files.all()]
-
-    def missing_on_disk(self):
-        """
-        Determine if the photo is missing its core file(s) on disk.
-        Returns True if none of its linked file paths exist anymore.
-        """
-        paths = self.all_file_paths()
-        if len(paths) == 0:
-            return True
-        any_exists = any(os.path.exists(p) for p in paths)
-        return not any_exists
 
     def _set_embedded_media(self, obj):
         return obj.main_file.embedded_media
