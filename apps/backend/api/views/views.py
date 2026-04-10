@@ -211,7 +211,7 @@ class BackendScanPhotosView(APIView):
                 chain.append(download_models, user)
 
             job_id = uuid.uuid4()
-            chain.append(scan_photos, user, True, job_id, user.scan_directory, None, True)
+            chain.append(scan_photos, user, False, job_id, user.scan_directory, None, True)
             chain.run()
 
             return Response(
