@@ -431,6 +431,8 @@ class Photo(models.Model):
             return
 
         album_date = self._find_album_date()
+        if album_date is None:
+            return
         city_name = self.geolocation_json["places"][-2]
         if album_date.location and len(album_date.location) > 0:
             prev_value = album_date.location

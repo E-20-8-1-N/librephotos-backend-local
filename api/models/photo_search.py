@@ -235,12 +235,13 @@ class PhotoSearch(models.Model):
                     file_ext = str('.' + image_path.lower().split('.')[-1])
                     caption = generate_image_caption(image_path, file_ext)
 
-                    caption_data = self.photo.caption_instance.captions_json or {}
-                    caption_data["im2txt"] = caption
-                    self.photo.caption_instance.captions_json = caption_data
-                    self.photo.caption_instance.save()
+                    if caption:
+                        caption_data = self.photo.caption_instance.captions_json or {}
+                        caption_data["im2txt"] = caption
+                        self.photo.caption_instance.captions_json = caption_data
+                        self.photo.caption_instance.save()
 
-                    search_captions += caption + " "
+                        search_captions += caption + " "
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
