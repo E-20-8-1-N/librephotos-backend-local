@@ -487,6 +487,16 @@ class Photo(models.Model):
             logger.info("Face detection is disabled")
             return
 
+        if (
+            not hasattr(self, "thumbnail")
+            or not self.thumbnail
+            or not self.thumbnail.thumbnail_big
+        ):
+            logger.warning(
+                f"image {self.image_hash}: no thumbnail_big available, skipping face extraction"
+            )
+            return
+
         unknown_cluster: api.models.cluster.Cluster = (
             api.models.cluster.get_unknown_cluster(user=self.owner)
         )
