@@ -447,6 +447,16 @@ class Photo(models.Model):
         album_date.save()
 
     def _extract_faces(self, second_try=False):
+        if (
+            not hasattr(self, "thumbnail")
+            or not self.thumbnail
+            or not self.thumbnail.thumbnail_big
+        ):
+            logger.warning(
+                f"image {self.image_hash}: no thumbnail_big available, skipping face extraction"
+            )
+            return
+
         unknown_cluster: api.models.cluster.Cluster = (
             api.models.cluster.get_unknown_cluster(user=self.owner)
         )
