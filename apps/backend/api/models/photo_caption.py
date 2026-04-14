@@ -10,9 +10,6 @@ import requests
 import gc
 import torch
 import time
-from api.image_captioning import generate_caption
-from api.llm import generate_prompt
-from api.models.user import User
 
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 CAPTION_GENERATOR_HOST = os.getenv("CAPTION_GENERATOR_HOST", "caption-generator")
@@ -230,88 +227,6 @@ class PhotoCaption(models.Model):
         except Exception:
             util.logger.exception(
                 f"could not generate im2txt captions for image {image_path}"
-            )
-            return False
-
-    def _generate_captions_moondream(self, commit=True):
-        """Generate captions using Moondream with enhanced prompt"""
-        if not self.photo.thumbnail or not self.photo.thumbnail.thumbnail_big:
-            util.logger.warning(
-                f"No thumbnail available for photo {self.photo.image_hash}"
-            )
-            return False
-
-        try:
-            image_path = self.photo.thumbnail.thumbnail_big.path
-        except Exception:
-            util.logger.warning(
-                f"Cannot access thumbnail path for photo {self.photo.image_hash}"
-            )
-            return False
-        if self.captions_json is None:
-            self.captions_json = {}
-        captions = self.captions_json
-
-        try:
-            from constance import config as site_config
-
-            util.logger.info("Generating Moondream captions")
-
-            llm_settings = User.objects.get(username=self.photo.owner).llm_settings
-
-            # Default prompt
-            prompt = "Describe this image in a short, natural image caption."
-
-            # Enhanced prompting if LLM is enabled
-            if str(site_config.LLM_MODEL).lower() != "none" and llm_settings["enabled"]:
-                face = api.models.Face.objects.filter(photo=self.photo).first()
-                person_name = ""
-                if face and llm_settings["add_person"]:
-                    person_name = (
-                        f" The person in the photo is named {face.person.name}. "
-                        f"Use the name '{face.person.name}' directly in the caption — do not say 'a person named'. "
-                        f"Keep the caption casual and to the point, like a friend tagging a photo."
-                    )
-
-                place = ""
-                if (
-                    self.photo.search_instance
-                    and self.photo.search_instance.search_location
-                    and llm_settings["add_location"]
-                ):
-                    place = f" This photo was taken at {self.photo.search_instance.search_location}."
-
-                keywords_instruction = ""
-                if llm_settings["add_keywords"]:
-                    keywords_instruction = " Include relevant tags and keywords."
-
-                prompt = (
-                    "Write a short, natural image caption."
-                    + person_name
-                    + place
-                    + keywords_instruction
-                )
-
-            util.logger.info(f"Moondream prompt: {prompt}")
-
-            # Generate caption with the final prompt
-            caption = generate_prompt(image_path=image_path, prompt=prompt)
-            caption = caption.replace("<start>", "").replace("<end>", "").strip()
-
-            # Save the result
-            captions["im2txt"] = caption
-            self.captions_json = captions
-            self.recreate_search_captions()
-            if commit:
-                self.save()
-
-            util.logger.info(
-                f"Generated Moondream captions for image {image_path}, caption: {caption}"
-            )
-            return True
-        except Exception:
-            util.logger.exception(
-                f"Could not generate Moondream captions for image {image_path}"
             )
             return False
 
