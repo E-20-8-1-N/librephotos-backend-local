@@ -77,7 +77,7 @@ def generate_face_embeddings(user, job_id: UUID):
 
 def generate_tags(user, job_id: UUID, full_scan=False):
     """
-    Generate image tags (Places365 captions) for photos.
+    Generate image tags via the caption-generator service.
 
     Args:
         user: The user whose photos to process
@@ -98,20 +98,13 @@ def generate_tags(user, job_id: UUID, full_scan=False):
             .order_by("-finished_at")
             .first()
         )
-        from constance import config as site_config
-
-        tagging_model = site_config.TAGGING_MODEL
 
         existing_photos = Photo.objects.filter(
             Q(owner=user.id)
             & (
                 Q(caption_instance__isnull=True)
                 | Q(caption_instance__captions_json__isnull=True)
-                | Q(
-                    **{
-                        f"caption_instance__captions_json__{tagging_model}__isnull": True
-                    }
-                )
+                | Q(caption_instance__captions_json__tag__isnull=True)
             )
         )
         if not full_scan and last_scan:
@@ -139,7 +132,9 @@ def generate_tags(user, job_id: UUID, full_scan=False):
 
 def generate_tag_job(photo: Photo, job_id: str):
     """
-    Worker task to generate tags for a single photo.
+    Worker task to generate tags (and captions) for a single photo.
+
+    Uses the caption-generator service which returns both caption and tags.
 
     Args:
         photo: The photo to process
@@ -571,7 +566,16 @@ def generate_im2txt_captions(user, job_id: UUID, full_scan=False):
 
 
 def generate_im2txt_job(photo: Photo, job_id: str):
-    """Generate and persist a caption for one photo."""
+    """
+    Worker task to generate im2txt captions (and tags) for a single photo.
+
+    Calls generate_captions_im2txt which uses the caption-generator service
+    to produce both caption and tags in a single call.
+
+    Args:
+        photo: The photo to process
+        job_id: Job ID for tracking progress
+    """
     failed = False
     error = None
     try:
