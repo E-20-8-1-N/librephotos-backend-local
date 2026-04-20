@@ -5,8 +5,6 @@ from django.db.models import Q
 import api.models
 from api import util
 import requests
-import gc
-import torch
 import time
 
 # --- Configuration (from Environment Variables) ---
@@ -129,10 +127,11 @@ def generate_image_caption(image_path: str, file_ext: str):
                 if response.status_code == 200:
                     result = response.json()
                     caption = result.get("caption", "").strip()
-                    if caption:
-                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        return caption
-                    util.logger.error("Caption API returned empty caption for %s", image_path)
+                    tag = result.get("objects", [])
+                    if caption or tag:
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}', tag: {tag}")
+                        return caption, tag
+                    util.logger.error("Caption API returned empty response for %s", image_path)
                 elif response.status_code == 504:
                     util.logger.warning(f"Server returned {response.status_code} (Processing) for {image_path}. Triggering retry...")
                     raise requests.exceptions.Timeout(f"Server returned {response.status_code} Gateway Timeout")
@@ -162,10 +161,13 @@ def generate_image_caption(image_path: str, file_ext: str):
         util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
         pass
     finally:
+        import gc
+        import torch
+        
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
-    return None
+    return None, None
 
 class PhotoCaption(models.Model):
     """Model for handling image captions and related functionality"""
@@ -210,16 +212,21 @@ class PhotoCaption(models.Model):
         captions = self.captions_json
 
         try:
-            caption = generate_image_caption(image_path, file_ext)
+            caption, tag = generate_image_caption(image_path, file_ext)
 
             captions["im2txt"] = caption
-            self.captions_json = captions
+            if tag is not None:
+                captions["tag"] = tag
+                self.captions_json = captions
+                self._update_caption_generator_album_things(tag)
+            else:
+                self.captions_json = captions
             self.recreate_search_captions()
             if commit:
                 self.save()
 
             util.logger.info(
-                f"generated im2txt captions for image {image_path} with caption: {caption}"
+                f"generated im2txt captions for image {image_path} with caption: {caption}, tag: {tag}"
             )
             return True
         except Exception:
@@ -301,74 +308,49 @@ class PhotoCaption(models.Model):
         search_instance.save()
 
     def generate_tag_captions(self, commit=True):
-        """Generate tag captions using the active tagging model (Places365 or SigLIP 2).
+        """Generate tag captions using the caption-generator service.
 
-        Tags are stored per-model in captions_json and are never deleted when
-        switching models -- only the active model's tags are generated / visible.
+        Tags are returned alongside captions from generate_image_caption()
+        and stored under the 'tag' key in captions_json.
         """
-        from constance import config as site_config
-
-        tagging_model = site_config.TAGGING_MODEL
-
         if not self.photo.thumbnail or not self.photo.thumbnail.thumbnail_big:
             return
 
-        # Skip if this photo already has tags from the active model
+        # Skip if this photo already has tags from the caption generator
         if (
             self.captions_json is not None
-            and self.captions_json.get(tagging_model) is not None
+            and self.captions_json.get("tag") is not None
         ):
             return
 
         try:
-            import requests
-
             image_path = self.photo.thumbnail.thumbnail_big.path
-            confidence = self.photo.owner.confidence
-            json_data = {
-                "image_path": image_path,
-                "confidence": confidence,
-                "tagging_model": tagging_model,
-            }
-            response = requests.post(
-                f"http://{BACKEND_HOST}:8011/generate-tags", json=json_data
+            file_ext = str('.' + image_path.lower().split('.')[-1])
+        except Exception:
+            util.logger.warning(
+                f"Cannot access thumbnail path for photo {self.photo.image_hash}"
             )
+            return
 
-            if not response.ok:
-                util.logger.warning(
-                    f"Tag service returned status {response.status_code} "
-                    f"for image {image_path}"
-                )
-                return
+        try:
+            caption, tag = generate_image_caption(image_path, file_ext)
 
-            try:
-                response_json = response.json()
-            except (ValueError, RuntimeError):
-                util.logger.warning(
-                    f"Tag service returned non-JSON response for image {image_path}"
-                )
-                return
-
-            tags_result = response_json.get("tags")
-
-            if tags_result is None:
-                return
             if self.captions_json is None:
                 self.captions_json = {}
 
-            # Store under the model-specific key
-            self.captions_json[tagging_model] = tags_result
-            self.recreate_search_captions()
+            if caption:
+                self.captions_json["im2txt"] = caption
 
-            if tagging_model == "siglip2":
-                self._update_siglip2_album_things(tags_result)
-            else:
-                self._update_places365_album_things(tags_result)
+            if tag is not None:
+                self.captions_json["tag"] = tag
+                self._update_caption_generator_album_things(tag)
+
+            self.recreate_search_captions()
 
             if commit:
                 self.save()
             util.logger.info(
-                f"generated {tagging_model} tags for image {image_path}."
+                f"generated caption and tags for image {image_path}."
             )
         except Exception as e:
             util.logger.exception(
@@ -429,6 +411,33 @@ class PhotoCaption(models.Model):
                 title=tag,
                 owner=self.photo.owner,
                 thing_type="siglip2_tag",
+            )
+            album_thing.photos.add(self.photo)
+            album_thing.save()
+
+    def _update_caption_generator_album_things(self, tag_result):
+        """Create/update AlbumThing entries for caption-generator tags."""
+        if isinstance(tag_result, list):
+            tags = tag_result
+        elif isinstance(tag_result, dict):
+            tags = tag_result.get("tags", [])
+        else:
+            tags = []
+
+        # Remove old caption_generator album associations for this photo
+        for album_thing in api.models.album_thing.AlbumThing.objects.filter(
+            Q(photos__in=[self.photo])
+            & Q(thing_type="caption_generator_tag")
+            & Q(owner=self.photo.owner)
+        ).all():
+            album_thing.photos.remove(self.photo)
+            album_thing.save()
+
+        for tag in tags:
+            album_thing = api.models.album_thing.get_album_thing(
+                title=tag,
+                owner=self.photo.owner,
+                thing_type="caption_generator_tag",
             )
             album_thing.photos.add(self.photo)
             album_thing.save()
