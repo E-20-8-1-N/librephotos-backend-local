@@ -4,8 +4,6 @@ from django.db import models
 from api import util
 import requests
 
-import gc
-import torch
 import time
 
 # --- Configuration (from Environment Variables) ---
@@ -128,10 +126,11 @@ def generate_image_caption(image_path: str, file_ext: str):
                 if response.status_code == 200:
                     result = response.json()
                     caption = result.get("caption", "").strip()
-                    if caption:
-                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        return caption
-                    util.logger.error("Caption API returned empty caption for %s", image_path)
+                    tag = result.get("objects", [])
+                    if caption or tag:
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}', tag: {tag}")
+                        return caption, tag
+                    util.logger.error("Caption API returned empty response for %s", image_path)
                 elif response.status_code == 504:
                     util.logger.warning(f"Server returned {response.status_code} (Processing) for {image_path}. Triggering retry...")
                     raise requests.exceptions.Timeout(f"Server returned {response.status_code} Gateway Timeout")
@@ -161,10 +160,13 @@ def generate_image_caption(image_path: str, file_ext: str):
         util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
         pass
     finally:
+        import gc
+        import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
-    return None
+    return None, None
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -232,15 +234,18 @@ class PhotoSearch(models.Model):
                 if self.photo.thumbnail and self.photo.thumbnail.thumbnail_big:
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = str('.' + image_path.lower().split('.')[-1])
-                    caption = generate_image_caption(image_path, file_ext)
+                    caption, tag = generate_image_caption(image_path, file_ext)
 
+                    caption_data = self.photo.caption_instance.captions_json or {}
                     if caption:
-                        caption_data = self.photo.caption_instance.captions_json or {}
                         caption_data["im2txt"] = caption
+                        search_captions += caption + " "
+                    if tag is not None:
+                        caption_data["tag"] = tag
+                        search_captions += tag + " "
+                    if caption or tag is not None:
                         self.photo.caption_instance.captions_json = caption_data
                         self.photo.caption_instance.save()
-
-                        search_captions += caption + " "
 
         # Add face/person names. Go through the related manager so a caller that
         # already prefetched the faces (and their people) does not pay a query
