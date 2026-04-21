@@ -179,7 +179,7 @@ def generate_tag_job(photo: Photo, job_id: str):
     error = None
     try:
         photo.refresh_from_db()
-        caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
+        caption_instance, _ = PhotoCaption.objects.get_or_create(photo=photo)
         caption_instance.generate_tag_captions(commit=True)
     except Exception as err:
         util.logger.exception("An error occurred: %s", photo.image_hash)
@@ -602,7 +602,10 @@ def generate_im2txt_captions(user, job_id: UUID, full_scan=False):
 
 def generate_im2txt_job(photo: Photo, job_id: str):
     """
-    Worker task to generate im2txt captions for a single photo.
+    Worker task to generate im2txt captions (and tags) for a single photo.
+
+    Calls generate_captions_im2txt which uses the caption-generator service
+    to produce both caption and tags in a single call.
 
     Args:
         photo: The photo to process
