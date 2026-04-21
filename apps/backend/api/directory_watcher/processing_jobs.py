@@ -602,10 +602,7 @@ def generate_im2txt_captions(user, job_id: UUID, full_scan=False):
 
 def generate_im2txt_job(photo: Photo, job_id: str):
     """
-    Worker task to generate im2txt captions (and tags) for a single photo.
-
-    Calls generate_captions_im2txt which uses the caption-generator service
-    to produce both caption and tags in a single call.
+    Worker task to generate im2txt captions for a single photo.
 
     Args:
         photo: The photo to process
