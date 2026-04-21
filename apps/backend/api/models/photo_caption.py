@@ -102,7 +102,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                 "caption-generator is unavailable; cannot generate caption for %s",
                 image_path,
             )
-            return None
+            return None, None
 
         payload = {"file_path": image_path, "file_ext": file_ext}
 
@@ -124,8 +124,35 @@ def generate_image_caption(image_path: str, file_ext: str):
 
                 if response.status_code == 200:
                     result = response.json()
-                    caption = result.get("caption", "").strip()
-                    tag = result.get("objects", [])
+                    caption_raw = (result.get("caption") or "").strip()
+
+                    # Parse embedded objects/texts from caption string
+                    caption = caption_raw
+                    objects = ""
+                    texts = ""
+                    if "\nobjects:" in caption_raw:
+                        parts = caption_raw.split("\nobjects:", 1)
+                        caption = parts[0].strip()
+                        remainder = parts[1]
+                        if "\ntexts:" in remainder:
+                            obj_part, txt_part = remainder.split("\ntexts:", 1)
+                            objects = obj_part.strip()
+                            texts = txt_part.strip()
+                        else:
+                            objects = remainder.strip()
+                    elif "\ntexts:" in caption_raw:
+                        parts = caption_raw.split("\ntexts:", 1)
+                        caption = parts[0].strip()
+                        texts = parts[1].strip()
+
+                    # Fall back to separate API fields
+                    if not objects:
+                        objects = (result.get("objects") or "").strip()
+                    if not texts:
+                        texts = (result.get("texts") or "").strip()
+
+                    tag_parts = [p for p in (objects, texts) if p]
+                    tag = ", ".join(tag_parts) if tag_parts else None
                     if caption or tag:
                         util.logger.info(f"Generated caption for {image_path}: '{caption}', tag: {tag}")
                         return caption, tag
