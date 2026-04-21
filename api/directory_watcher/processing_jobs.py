@@ -73,7 +73,7 @@ def generate_face_embeddings(user, job_id: UUID):
 
 def generate_tags(user, job_id: UUID, full_scan=False):
     """
-    Generate image tags via the caption-generator service.
+    Generate image tags (Places365 captions) for photos.
     
     Args:
         user: The user whose photos to process
@@ -94,13 +94,16 @@ def generate_tags(user, job_id: UUID, full_scan=False):
             .order_by("-finished_at")
             .first()
         )
+        from constance import config as site_config
+
+        tagging_model = site_config.TAGGING_MODEL
 
         existing_photos = Photo.objects.filter(
             Q(owner=user.id)
             & (
                 Q(caption_instance__isnull=True)
                 | Q(caption_instance__captions_json__isnull=True)
-                | Q(caption_instance__captions_json__caption_generator__isnull=True)
+                | Q(**{f"caption_instance__captions_json__{tagging_model}__isnull": True})
             )
         )
         if not full_scan and last_scan:
@@ -128,9 +131,7 @@ def generate_tags(user, job_id: UUID, full_scan=False):
 
 def generate_tag_job(photo: Photo, job_id: str):
     """
-    Worker task to generate tags (and captions) for a single photo.
-    
-    Uses the caption-generator service which returns both caption and tags.
+    Worker task to generate tags for a single photo.
     
     Args:
         photo: The photo to process
@@ -204,10 +205,7 @@ def generate_im2txt_captions(user, job_id: UUID, full_scan=False):
 
 def generate_im2txt_job(photo: Photo, job_id: str):
     """
-    Worker task to generate im2txt captions (and tags) for a single photo.
-
-    Calls generate_captions_im2txt which uses the caption-generator service
-    to produce both caption and tags in a single call.
+    Worker task to generate im2txt captions for a single photo.
 
     Args:
         photo: The photo to process
@@ -218,7 +216,7 @@ def generate_im2txt_job(photo: Photo, job_id: str):
     try:
         photo.refresh_from_db()
         caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
-        caption_instance.generate_captions_im2txt(commit=True)
+        caption_instance.recreate_search_captions()
     except Exception as err:
         util.logger.exception("An error occurred: %s", photo.image_hash)
         print(f"[ERR]: {err}")
