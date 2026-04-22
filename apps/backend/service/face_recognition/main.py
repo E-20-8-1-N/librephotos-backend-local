@@ -1,3 +1,4 @@
+import gc
 import time
 
 import gevent
@@ -22,9 +23,34 @@ SUPPORTED_FACE_MODELS = {
     "buffalo_sc",
 }
 
+# Unload models after 2 minutes of inactivity
+IDLE_TIMEOUT_SECONDS = 120
+
 
 def log(message):
     print(f"face_recognition: {message}")
+
+
+def _unload_models():
+    """Free all loaded face analysis models."""
+    global face_analysis_models
+    if face_analysis_models:
+        log(f"unloading {len(face_analysis_models)} model(s) to free memory")
+        face_analysis_models.clear()
+        gc.collect()
+
+
+def _idle_unloader():
+    """Background greenlet that unloads models after idle timeout."""
+    global last_request_time
+    while True:
+        gevent.sleep(30)
+        if (
+            face_analysis_models
+            and last_request_time is not None
+            and time.time() - last_request_time > IDLE_TIMEOUT_SECONDS
+        ):
+            _unload_models()
 
 
 def _normalize_model_name(model_name):
@@ -174,4 +200,5 @@ if __name__ == "__main__":
     log("service starting")
     server = WSGIServer(("0.0.0.0", 8005), app)
     server_thread = gevent.spawn(server.serve_forever)
-    gevent.joinall([server_thread])
+    idle_thread = gevent.spawn(_idle_unloader)
+    gevent.joinall([server_thread, idle_thread])

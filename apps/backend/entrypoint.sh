@@ -9,6 +9,17 @@ fi
 export OPENBLAS_NUM_THREADS=1
 export OPENBLAS_MAIN_FREE=1
 
+# --- Memory optimization ---
+# Force glibc to return freed memory to the OS more aggressively
+export MALLOC_TRIM_THRESHOLD_=65536
+export MALLOC_MMAP_THRESHOLD_=65536
+# Limit PyTorch/MKL threads to reduce per-thread memory overhead
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-2}
+export TORCH_NUM_THREADS=${TORCH_NUM_THREADS:-2}
+# Disable PyTorch gradient tracking globally (inference only)
+export PYTORCH_NO_CUDA_MEMORY_CACHING=1
+
 mkdir -p /logs
 python manage.py showmigrations | tee /logs/show_migrate.log
 python manage.py migrate | tee /logs/command_migrate.log
@@ -35,10 +46,12 @@ echo "Running backend server..."
 
 python manage.py qcluster 2>&1 | tee /logs/qcluster.log &
 
+GUNICORN_WORKERS=${WEB_CONCURRENCY:-1}
+
 if [[ "$DEBUG" = 1 ]]; then
     echo "development backend starting"
-    gunicorn --worker-class=gevent --max-requests 50 --reload --bind 0.0.0.0:8001 --log-level=info librephotos.wsgi 2>&1 | tee /logs/gunicorn_django.log
+    gunicorn --worker-class=gevent --workers=$GUNICORN_WORKERS --max-requests 50 --max-requests-jitter 10 --reload --bind 0.0.0.0:8001 --log-level=info librephotos.wsgi 2>&1 | tee /logs/gunicorn_django.log
 else
     echo "production backend starting"
-    gunicorn --worker-class=gevent --max-requests 50 --bind 0.0.0.0:8001 --log-level=info librephotos.wsgi 2>&1 | tee /logs/gunicorn_django.log
+    gunicorn --worker-class=gevent --workers=$GUNICORN_WORKERS --max-requests 50 --max-requests-jitter 10 --bind 0.0.0.0:8001 --log-level=info librephotos.wsgi 2>&1 | tee /logs/gunicorn_django.log
 fi

@@ -1,3 +1,4 @@
+import gc
 import time
 
 import gevent
@@ -11,6 +12,9 @@ app = Flask(__name__)
 places365_instance = None
 siglip2_instance = None
 last_request_time = None
+
+# Unload models after 2 minutes of inactivity
+IDLE_TIMEOUT_SECONDS = 120
 
 
 def log(message):
@@ -42,6 +46,33 @@ def tag_with_places365(image_path, confidence):
     return places365_instance.inference_places365(image_path, confidence)
 
 
+def _unload_models():
+    """Free all loaded tagging models."""
+    global places365_instance, siglip2_instance
+    if places365_instance is not None:
+        log("unloading places365 model to free memory")
+        places365_instance.unload()
+        places365_instance = None
+    if siglip2_instance is not None:
+        log("unloading siglip2 model to free memory")
+        siglip2_instance.unload()
+        siglip2_instance = None
+    gc.collect()
+
+
+def _idle_unloader():
+    """Background greenlet that unloads models after idle timeout."""
+    global last_request_time
+    while True:
+        gevent.sleep(30)
+        if (
+            (places365_instance is not None or siglip2_instance is not None)
+            and last_request_time is not None
+            and time.time() - last_request_time > IDLE_TIMEOUT_SECONDS
+        ):
+            _unload_models()
+
+
 @app.route("/generate-tags", methods=["POST"])
 def generate_tags():
     global last_request_time
@@ -70,4 +101,5 @@ if __name__ == "__main__":
     log("service starting")
     server = WSGIServer(("0.0.0.0", 8011), app)
     server_thread = gevent.spawn(server.serve_forever)
-    gevent.joinall([server_thread])
+    idle_thread = gevent.spawn(_idle_unloader)
+    gevent.joinall([server_thread, idle_thread])
