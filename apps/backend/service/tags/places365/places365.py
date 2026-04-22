@@ -1,17 +1,19 @@
 # PlacesCNN to predict the scene category, attribute, and class activation map in a single pass
 # by Bolei Zhou, sep 2, 2017
 # last modified date: Dec. 27, 2017, migrating everything to python36 and latest pytorch and torchvision
+import gc
 import os
 
 import numpy as np
 import torch
 from PIL import Image
 from pillow_heif import register_heif_opener
-register_heif_opener() # Register HEIF opener for Pillow
 from places365 import wideresnet
 from torch.autograd import Variable as V
 from torch.nn import functional as F
 from torchvision import transforms as trn
+
+register_heif_opener()
 
 # import warnings
 
@@ -37,6 +39,7 @@ class Places365:
         self.labels_IO = None
         self.labels_attribute = None
         self.labels_and_model_are_load = False
+        gc.collect()
 
     def load(self):
         self.load_model()
@@ -130,8 +133,9 @@ class Places365:
             # Normalize the image for processing
             input_img = V(tf(img).unsqueeze(0))
 
-        logit = self.model.forward(input_img)
-        h_x = F.softmax(logit, 1).data.squeeze()
+        with torch.no_grad():
+            logit = self.model.forward(input_img)
+            h_x = F.softmax(logit, 1).data.squeeze()
         probs, idx = h_x.sort(0, True)
         return probs.numpy(), idx.numpy()
 
