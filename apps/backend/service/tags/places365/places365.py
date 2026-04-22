@@ -1,6 +1,7 @@
 # PlacesCNN to predict the scene category, attribute, and class activation map in a single pass
 # by Bolei Zhou, sep 2, 2017
 # last modified date: Dec. 27, 2017, migrating everything to python36 and latest pytorch and torchvision
+import gc
 import os
 
 import numpy as np
@@ -37,6 +38,7 @@ class Places365:
         self.labels_IO = None
         self.labels_attribute = None
         self.labels_and_model_are_load = False
+        gc.collect()
 
     def load(self):
         self.load_model()
@@ -143,8 +145,9 @@ class Places365:
                 input_img = V(tf(img).unsqueeze(0))
 
             # forward pass
-            logit = self.model.forward(input_img)
-            h_x = F.softmax(logit, 1).data.squeeze()
+            with torch.no_grad():
+                logit = self.model.forward(input_img)
+                h_x = F.softmax(logit, 1).data.squeeze()
             probs, idx = h_x.sort(0, True)
             probs = probs.numpy()
             idx = idx.numpy()
