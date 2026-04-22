@@ -1,6 +1,7 @@
 import gc
 
 import numpy as np
+import torch
 import PIL
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
@@ -20,6 +21,9 @@ class SemanticSearch:
         del self.model
         self.model = None
         gc.collect()
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         self.model_is_loaded = False
         pass
 
@@ -27,8 +31,6 @@ class SemanticSearch:
         self.model = SentenceTransformer(model)
 
     def calculate_clip_embeddings(self, img_paths, model):
-        import torch
-
         if not self.model_is_loaded:
             self.load(model)
         imgs = []
@@ -47,7 +49,8 @@ class SemanticSearch:
                 print(f"Error loading image: {img_paths}")
 
         try:
-            imgs_emb = self.model.encode(imgs, batch_size=32, convert_to_tensor=True)
+            with torch.no_grad():
+                imgs_emb = self.model.encode(imgs, batch_size=32, convert_to_tensor=True)
             if torch.cuda.is_available():
                 if type(img_paths) is list:
                     magnitudes = list(
@@ -77,7 +80,8 @@ class SemanticSearch:
         if not self.model_is_loaded:
             self.load(model)
 
-        query_emb = self.model.encode([query], convert_to_tensor=True)[0].tolist()
+        with torch.no_grad():
+            query_emb = self.model.encode([query], convert_to_tensor=True)[0].tolist()
         magnitude = np.linalg.norm(query_emb)
 
         return query_emb, magnitude
