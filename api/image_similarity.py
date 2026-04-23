@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import gc
+
 import numpy as np
 import requests
 from django.conf import settings
@@ -73,7 +75,7 @@ def build_image_similarity_index(user):
         .order_by("image_hash")
         .all()
     )
-    paginator = Paginator(photos, 5000)
+    paginator = Paginator(photos, 2000)
 
     for page in range(1, paginator.num_pages + 1):
         image_hashes = []
@@ -91,5 +93,7 @@ def build_image_similarity_index(user):
             "image_embeddings": image_embeddings,
         }
         requests.post(settings.IMAGE_SIMILARITY_SERVER + "/build/", json=post_data)
+        del post_data, image_hashes, image_embeddings
+        gc.collect()
     elapsed = (datetime.now() - start).total_seconds()
     logger.info("building similarity index took %.2f seconds" % elapsed)
