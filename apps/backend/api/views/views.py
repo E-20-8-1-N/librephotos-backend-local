@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 import uuid
 from urllib.parse import quote
 
@@ -168,6 +169,43 @@ def get_user_from_path(raw_path, user_home_directory_prefix):
 
     return user, abs_path, None
 
+
+def _run_backend_user_scan(user, job_id, scan_directory):
+    """
+    Run the scan orchestrator for a user directly in a background thread so
+    the file-discovery / thumbnail-queueing phase starts immediately and is
+    not blocked behind other users' heavy jobs (generate_tags,
+    generate_im2txt_captions, add_geolocation, etc.) in the shared
+    django-q FIFO queue.
+
+    Heavy per-file work is still dispatched to django-q workers from inside
+    scan_photos(), but queuing happens in parallel for each caller, so
+    thumbnails for newly added files appear without waiting for any in-flight
+    heavy job to finish.
+    """
+    from django import db
+
+    try:
+        if not do_all_models_exist():
+            try:
+                download_models(user)
+            except Exception:
+                logger.exception(
+                    "download_models failed for user %s; aborting backend scan",
+                    getattr(user, "username", user.pk),
+                )
+                return
+
+        scan_photos(user, False, job_id, scan_directory, None, True)
+    except Exception:
+        logger.exception(
+            "backend scan thread failed for user %s",
+            getattr(user, "username", user.pk),
+        )
+    finally:
+        db.connections.close_all()
+
+
 class BackendScanPhotosView(APIView):
     """
     No-auth endpoint. Accepts {"path": "/data/pool/home/user01/img01.jpg"}.
@@ -207,13 +245,19 @@ class BackendScanPhotosView(APIView):
             return error_response
 
         try:
-            chain = Chain()
-            if not do_all_models_exist():
-                chain.append(download_models, user)
-
             job_id = uuid.uuid4()
-            chain.append(scan_photos, user, False, job_id, user.scan_directory, None, True)
-            chain.run()
+
+            # Run orchestration in a daemon thread so this request returns
+            # immediately and the scan does not have to wait for a django-q
+            # worker slot behind long-running heavy jobs. scan_photos() will
+            # enqueue per-file (thumbnail) tasks as soon as it starts running,
+            # so thumbnails for newly added files show up quickly.
+            threading.Thread(
+                target=_run_backend_user_scan,
+                args=(user, job_id, user.scan_directory),
+                name=f"backend-scan-{user.pk}-{job_id}",
+                daemon=True,
+            ).start()
 
             return Response(
                 {
@@ -651,7 +695,7 @@ class ScanUploadedPhotosView(APIView):
             chain.append(download_models, request.user)
         try:
             job_id = uuid.uuid4()
-            chain.append(scan_photos, request.user, True, job_id, request.user.scan_directory, None, True)
+            chain.append(scan_photos, request.user, False, job_id, request.user.scan_directory, None, False)
             chain.run()
             return Response({"status": True, "job_id": job_id})
         except BaseException:
