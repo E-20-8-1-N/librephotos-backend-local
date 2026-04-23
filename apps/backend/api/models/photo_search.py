@@ -62,11 +62,10 @@ def ensure_caption_generator_ready() -> bool:
             )
             container.start()
     except Exception as e:
-        util.logger.error(
+        util.logger.exception(
             "Failed to start caption-generator container '%s': %s",
             CAPTION_GENERATOR_HOST,
             e,
-            exc_info=True,
         )
         return False
 
@@ -184,7 +183,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                 util.logger.error(f"Failed to generate caption for {image_path}: {e}")
                 break
     except Exception as e:
-        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+        util.logger.exception(f"Failed to generate caption for {image_path}: {e}")
         pass
     finally:
         import gc
@@ -254,6 +253,10 @@ class PhotoSearch(models.Model):
             if user_caption:
                 search_captions += user_caption + " "
 
+            im2txt_tag = captions_json.get("im2txt_tag", "")
+            if im2txt_tag:
+                search_captions += im2txt_tag + " "
+
             im2txt_caption = captions_json.get("im2txt", "")
             if im2txt_caption:
                 search_captions += im2txt_caption + " "
@@ -267,8 +270,8 @@ class PhotoSearch(models.Model):
                     if caption:
                         caption_data["im2txt"] = caption
                         search_captions += caption + " "
-                    if tag is not None:
-                        caption_data["tag"] = tag
+                    if tag:
+                        caption_data["im2txt_tag"] = tag
                         search_captions += tag + " "
                     if caption or tag is not None:
                         self.photo.caption_instance.captions_json = caption_data

@@ -231,8 +231,8 @@ class PhotoCaption(models.Model):
 
     def _store_generated_caption(self, captions, caption, commit, tag=None):
         captions["im2txt"] = caption
-        if tag is not None:
-            captions["tag"] = tag
+        if tag:
+            captions["im2txt_tag"] = tag
             self._update_caption_generator_album_things(tag)
         self.captions_json = captions
         self.recreate_search_captions()
@@ -353,7 +353,7 @@ class PhotoCaption(models.Model):
         """Generate tag captions using the caption-generator service.
 
         Tags are returned alongside captions from generate_image_caption()
-        and stored under the 'tag' key in captions_json.
+        and stored under the 'im2txt_tag' key in captions_json.
         """
         if not settings.FEATURE_SCENE_CLASSIFICATION:
             util.logger.info("Scene classification is disabled")
@@ -365,7 +365,7 @@ class PhotoCaption(models.Model):
         # Skip if this photo already has tags from the caption generator
         if (
             self.captions_json is not None
-            and self.captions_json.get("tag") is not None
+            and self.captions_json.get("im2txt_tag") is not None
         ):
             return
 
@@ -387,8 +387,8 @@ class PhotoCaption(models.Model):
             if caption:
                 self.captions_json["im2txt"] = caption
 
-            if tag is not None:
-                self.captions_json["tag"] = tag
+            if tag:
+                self.captions_json["im2txt_tag"] = tag
                 self._update_caption_generator_album_things(tag)
 
             self.recreate_search_captions()
