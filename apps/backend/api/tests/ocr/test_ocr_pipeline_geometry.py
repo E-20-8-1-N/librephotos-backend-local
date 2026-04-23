@@ -375,9 +375,8 @@ class ReadImageInputTests(SimpleTestCase):
 def _load_ocr_main_module():
     """Import the sidecar's main.py in its script context (ppocr on sys.path).
 
-    main.py uses ``from ppocr...`` imports (mirroring service/tags/main.py), so
-    service/ocr must be on sys.path.  Importing it neither starts the server nor
-    loads any model.
+    main.py uses ``from ppocr...`` imports, so service/ocr must be on sys.path.
+    Importing it neither starts the server nor loads any model.
     """
     service_ocr = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "..", "service", "ocr")

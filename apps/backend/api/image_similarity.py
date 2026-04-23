@@ -1,3 +1,4 @@
+import gc
 from datetime import datetime
 
 import numpy as np
@@ -83,7 +84,7 @@ def build_image_similarity_index(user):
         .order_by("image_hash")
         .all()
     )
-    paginator = Paginator(photos, 5000)
+    paginator = Paginator(photos, 2000)
 
     for page in range(1, paginator.num_pages + 1):
         image_hashes = []
@@ -105,5 +106,7 @@ def build_image_similarity_index(user):
             json=post_data,
             timeout=SIMILARITY,
         )
+        del post_data, image_hashes, image_embeddings
+        gc.collect()
     elapsed = (datetime.now() - start).total_seconds()
     logger.info("building similarity index took %.2f seconds", elapsed)

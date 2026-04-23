@@ -63,7 +63,7 @@ def generate_face_embeddings(user, job_id: UUID):
         lrj.update_progress(current=0, target=faces.count())
         db.connections.close_all()
 
-        for idx, face in enumerate(faces):
+        for idx, face in enumerate(faces.iterator()):
             if _scan_cancelled(idx, job_id, "Generate face embeddings job cancelled"):
                 return
             _encode_face(face, job_id)
@@ -154,7 +154,7 @@ def generate_tags(user, job_id: UUID, full_scan=False):
         if not _begin_photo_scan(lrj, existing_photos):
             return
 
-        for idx, photo in enumerate(existing_photos):
+        for idx, photo in enumerate(existing_photos.iterator()):
             if _scan_cancelled(idx, job_id, "Generate tags job cancelled"):
                 return
             AsyncTask(generate_tag_job, photo, job_id).run()
@@ -649,7 +649,7 @@ def add_geolocation(user, job_id: UUID, full_scan=False):
         if not _begin_photo_scan(lrj, existing_photos):
             return
 
-        for idx, photo in enumerate(existing_photos):
+        for idx, photo in enumerate(existing_photos.iterator()):
             if _scan_cancelled(idx, job_id, "Add geolocation job cancelled"):
                 return
             AsyncTask(geolocation_job, photo, job_id).run()
@@ -720,7 +720,7 @@ def scan_faces(user, job_id: UUID, full_scan=False):
         if not _begin_photo_scan(lrj, existing_photos):
             return
 
-        for idx, photo in enumerate(existing_photos):
+        for idx, photo in enumerate(existing_photos.iterator()):
             if _scan_cancelled(idx, job_id, "Scan faces job cancelled"):
                 return
             _extract_faces_for_photo(photo, job_id)

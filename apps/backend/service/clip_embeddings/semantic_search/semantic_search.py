@@ -34,12 +34,19 @@ class SemanticSearch:
         paths = img_paths if type(img_paths) is list else [img_paths]
         imgs = []
         for path in paths:
+            image = None
             try:
                 image = PIL.Image.open(path)
                 image.load()
                 imgs.append(image)
             except PIL.UnidentifiedImageError:
+                if image is not None:
+                    image.close()
                 print(f"Error loading image: {path}")
+            except Exception as e:
+                if image is not None:
+                    image.close()
+                print(f"Error loading image {path}: {e}")
         return imgs
 
     def batch_embeddings(self, imgs_emb, on_cuda):

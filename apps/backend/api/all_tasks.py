@@ -1,5 +1,5 @@
-import io
 import os
+import tempfile
 import zipfile
 
 from django.conf import settings
@@ -108,21 +108,28 @@ def zip_photos_task(job_id, user, photos, filename):
     lrj.update_progress(current=0, target=count)
     output_directory = os.path.join(settings.MEDIA_ROOT, "zip")
     output_path = os.path.join(output_directory, filename)
+    tmp_path = None
     try:
         if not os.path.exists(output_directory):
             os.mkdir(output_directory)
-        mf = io.BytesIO()
+        # Write directly to a temp file on disk instead of BytesIO to avoid
+        # holding the entire zip in memory (which can be multi-GB).
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=output_directory, suffix=".zip.tmp")
+        os.close(tmp_fd)
         files_added = {}  # Track files by path to avoid duplicates
 
         for done_count, photo in enumerate(photos, start=1):
-            _add_photo_files_to_zip(photo, mf, files_added)
+            _add_photo_files_to_zip(photo, tmp_path, files_added)
             lrj.update_progress(current=done_count, target=count)
 
-        with open(output_path, "wb") as output_file:
-            output_file.write(mf.getvalue())
+        os.replace(tmp_path, output_path)
+        tmp_path = None
 
     except Exception as e:
         util.logger.error(f"Error while converting files to zip: {e}")
+        # Clean up temp file on error
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     lrj.complete()
     # scheduling a task to delete the zip file after a day

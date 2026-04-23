@@ -1,3 +1,4 @@
+import gc
 import os
 
 from django.db.models import Q
@@ -42,7 +43,11 @@ def store_clip_embeddings(objs):
     for obj, img_emb, magnitude in zip(objs, imgs_emb, magnitudes):
         obj.clip_embeddings = img_emb.tolist()
         obj.clip_embeddings_magnitude = magnitude
-        obj.save()
+    Photo.objects.bulk_update(
+        objs, ["clip_embeddings", "clip_embeddings_magnitude"]
+    )
+    del imgs_emb, magnitudes, imgs
+    gc.collect()
 
 
 def batch_calculate_clip_embedding(user):
@@ -71,6 +76,8 @@ def batch_calculate_clip_embedding(user):
                 continue
 
             store_clip_embeddings(valid_objs)
+            del valid_objs, objs
+            gc.collect()
         except Exception as e:
             util.logger.error(f"Error calculating clip embeddings: {e}")
 
