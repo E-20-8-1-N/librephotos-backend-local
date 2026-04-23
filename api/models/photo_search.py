@@ -255,6 +255,10 @@ class PhotoSearch(models.Model):
             if user_caption:
                 search_captions += user_caption + " "
 
+            im2txt_tag = captions_json.get("im2txt_tag", "")
+            if im2txt_tag:
+                search_captions += im2txt_tag + " "
+            
             im2txt_caption = captions_json.get("im2txt", "")
             if im2txt_caption:
                 search_captions += im2txt_caption + " "
@@ -268,8 +272,8 @@ class PhotoSearch(models.Model):
                     if caption:
                         caption_data["im2txt"] = caption
                         search_captions += caption + " "
-                    if tag is not None:
-                        caption_data["tag"] = tag
+                    if tag:
+                        caption_data["im2txt_tag"] = tag
                         search_captions += tag + " "
                     if caption or tag is not None:
                         self.photo.caption_instance.captions_json = caption_data
