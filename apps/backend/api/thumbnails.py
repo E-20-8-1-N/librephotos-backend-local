@@ -93,6 +93,11 @@ def _resize_big_thumbnail(output_height, complete_path, hash, file_type):
 
 def _render_thumbnail(input_path, output_height, complete_path, local_orientation):
     with Image.open(input_path) as image:
+        # Ask compatible decoders to avoid allocating the full-resolution image.
+        try:
+            image.draft("RGB", (output_height * 4, output_height * 4))
+        except Exception:
+            pass
         image = ImageOps.exif_transpose(image)
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")

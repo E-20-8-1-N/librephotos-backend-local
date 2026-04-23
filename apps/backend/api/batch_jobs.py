@@ -62,7 +62,7 @@ def batch_calculate_clip_embedding(user):
 
     configure_torch_runtime()
 
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
     done_count = 0
     while done_count < count:
         try:
