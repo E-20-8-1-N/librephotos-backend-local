@@ -42,15 +42,15 @@ ML_MODELS = [
         "target-dir": "clip-embeddings",
         "sha256": "3d2f66350b75127024603dfaff55d4b981461363072d9697aa88d472440ecb4e",
     },
-    {
-        "id": 2,
-        "name": "places365",
-        "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/places365.tar.gz",
-        "type": MlTypes.CATEGORIES,
-        "unpack-command": "tar -zxC",
-        "target-dir": "places365",
-        "sha256": "27792ffcd1f6a4de7abebdea046dda0916f9cd12eba7bed7b5f51f120f91f0d8",
-    },
+    # {
+    #     "id": 2,
+    #     "name": "places365",
+    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/places365.tar.gz",
+    #     "type": MlTypes.CATEGORIES,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "places365",
+    #     "sha256": "27792ffcd1f6a4de7abebdea046dda0916f9cd12eba7bed7b5f51f120f91f0d8",
+    # },
     # {
     #     "id": 3,
     #     "name": "im2txt",
@@ -60,15 +60,15 @@ ML_MODELS = [
     #     "target-dir": "im2txt",
     #     "sha256": "980670c0365c0e32b5fecfc0907bfee4742bcd6a40e0d6ac5692c69bbd49ccc4",
     # },
-    {
-        "id": 4,
-        "name": "resnet18",
-        "url": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
-        "type": MlTypes.CATEGORIES,
-        "unpack-command": None,
-        "target-dir": "resnet18-5c106cde.pth",
-        "sha256": "5c106cde386e87d4033832f2996f5493238eda96ccf559d1d62760c4de0613f8",
-    },
+    # {
+    #     "id": 4,
+    #     "name": "resnet18",
+    #     "url": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
+    #     "type": MlTypes.CATEGORIES,
+    #     "unpack-command": None,
+    #     "target-dir": "resnet18-5c106cde.pth",
+    #     "sha256": "5c106cde386e87d4033832f2996f5493238eda96ccf559d1d62760c4de0613f8",
+    # },
     {
         # InsightFace buffalo_* and antelopev2 bundles are licensed for
         # NON-COMMERCIAL RESEARCH USE ONLY, so they deliberately stay on their
@@ -118,27 +118,27 @@ ML_MODELS = [
     #     "target-dir": "mistral-7b-instruct-v0.2.Q5_K_M.gguf",
     #     "sha256": "b85cdd596ddd76f3194047b9108a73c74d77ba04bef49255a50fc0cfbda83d32",
     # },
-    {
-        "id": 11,
-        "name": "siglip2",
-        "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/siglip2/vision_model.onnx",
-        "type": MlTypes.TAGGING,
-        "unpack-command": None,
-        "target-dir": "siglip2/vision_model.onnx",
-        "sha256": "49ae4958b1098ca995e929d646f7be05a69c65e6344beae07d58c6598ffc5210",
-        "additional_files": [
-            {
-                "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/siglip2/text_model.onnx",
-                "target": "siglip2/text_model.onnx",
-                "sha256": "d28c21c7f12c38b0ec43aacb7ce2228fba6bd6b20641802ef2b29809ece46af8",
-            },
-            {
-                "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/siglip2/tokenizer.model",
-                "target": "siglip2/tokenizer.model",
-                "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2",
-            },
-        ],
-    },
+    # {
+    #     "id": 11,
+    #     "name": "siglip2",
+    #     "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/siglip2/vision_model.onnx",
+    #     "type": MlTypes.TAGGING,
+    #     "unpack-command": None,
+    #     "target-dir": "siglip2/vision_model.onnx",
+    #     "sha256": "49ae4958b1098ca995e929d646f7be05a69c65e6344beae07d58c6598ffc5210",
+    #     "additional_files": [
+    #         {
+    #             "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/siglip2/text_model.onnx",
+    #             "target": "siglip2/text_model.onnx",
+    #             "sha256": "d28c21c7f12c38b0ec43aacb7ce2228fba6bd6b20641802ef2b29809ece46af8",
+    #         },
+    #         {
+    #             "url": "https://huggingface.co/derneuere/librephotos_models/resolve/main/siglip2/tokenizer.model",
+    #             "target": "siglip2/tokenizer.model",
+    #             "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2",
+    #         },
+    #     ],
+    # },
     {
         "id": 12,
         "name": "buffalo_l",
