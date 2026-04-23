@@ -62,6 +62,15 @@ def _normalize_model_name(model_name):
 def _get_face_analysis(model_name):
     model_name = _normalize_model_name(model_name)
     if model_name not in face_analysis_models:
+        # Only keep one face model loaded at a time. Drop any previously
+        # loaded (different) model before loading the new one to avoid
+        # RSS growth when users switch buffalo_* variants.
+        if face_analysis_models:
+            log(
+                f"evicting {list(face_analysis_models.keys())} before loading {model_name}"
+            )
+            face_analysis_models.clear()
+            gc.collect()
         from insightface.app import FaceAnalysis
 
         face_analysis = FaceAnalysis(
