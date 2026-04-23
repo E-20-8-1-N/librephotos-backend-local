@@ -218,6 +218,89 @@ def wait_for_group_and_process_metadata(
             )
 
 
+def wait_for_group_and_queue_post_processing(
+    group_id: str,
+    user_id: int,
+    full_scan: bool,
+    force_im2txt: bool,
+    queue_scan_missing: bool,
+    expected_count: int,
+    *,
+    attempt: int = 1,
+    max_attempts: int = 2000,
+    **kwargs,
+):
+    """
+    Sentinel task: waits until the image-processing group for a user's scan is
+    complete, then enqueues the heavy post-processing jobs (tags, geolocation,
+    im2txt captions, clip embeddings, face scan, missing-photo scan, repair).
+
+    Deferring these heavy jobs means that when a second user triggers a scan,
+    their thumbnail (image-group) tasks land in the queue immediately after the
+    first user's thumbnail tasks — *before* the first user's heavy jobs are
+    enqueued — so thumbnails for the second user show up without waiting for
+    the first user's tagging/captioning/geolocation work to drain.
+
+    The sentinel re-enqueues itself with a small delay until the group is
+    complete or `max_attempts` is exhausted.
+    """
+    from django_q.tasks import count_group
+    from django.contrib.auth import get_user_model
+
+    try:
+        completed = count_group(group_id)
+    except Exception as e:
+        util.logger.warning(
+            f"post-processing sentinel: could not read group status for {group_id}: {e}. Treating as incomplete."
+        )
+        completed = 0
+
+    completed_int = int(completed or 0)
+
+    if completed_int < expected_count and attempt < max_attempts:
+        util.logger.info(
+            f"post-processing sentinel: group {group_id} {completed_int}/{expected_count} complete; "
+            f"rescheduling (attempt {attempt + 1}/{max_attempts})"
+        )
+        AsyncTask(
+            wait_for_group_and_queue_post_processing,
+            group_id,
+            user_id,
+            full_scan,
+            force_im2txt,
+            queue_scan_missing,
+            expected_count,
+            attempt=attempt + 1,
+            max_attempts=max_attempts,
+            schedule=datetime.timedelta(seconds=5),
+        ).run()
+        return
+
+    if completed_int < expected_count:
+        util.logger.warning(
+            f"post-processing sentinel: proceeding despite incomplete image group {group_id}: "
+            f"{completed_int}/{expected_count} after {attempt} attempts"
+        )
+    else:
+        util.logger.info(
+            f"post-processing sentinel: image group {group_id} complete; "
+            f"enqueuing heavy post-processing jobs"
+        )
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        util.logger.warning(
+            f"post-processing sentinel: user {user_id} not found; skipping post-processing"
+        )
+        return
+
+    _enqueue_post_processing_jobs(
+        user, full_scan, force_im2txt, queue_scan_missing
+    )
+
+
 def photo_scanner(user, last_scan, full_scan, path, job_id):
     """
     Check if a single file needs processing and queue it.
@@ -332,7 +415,7 @@ def _queue_scan_work(
         ).run()
 
     if not metadata_paths:
-        return
+        return image_group_id
 
     if not groups_to_process:
         util.logger.info(
@@ -340,7 +423,7 @@ def _queue_scan_work(
         )
         for path in metadata_paths:
             photo_scanner(user, last_scan, full_scan, path, job_id)
-        return
+        return image_group_id
 
     util.logger.info(
         f"Scheduling sentinel to process {len(metadata_paths)} metadata files after {len(groups_to_process)} image groups"
@@ -356,13 +439,14 @@ def _queue_scan_work(
         attempt=1,
         max_attempts=2,
     ).run()
+    return image_group_id
 
 
-def _queue_followup_jobs(user, full_scan, scan_directory, scan_files, force_im2txt):
-    """Queue the jobs that run once the scan itself has been dispatched."""
-    # if the scan type is not the default user scan directory, or if it is specified as only scanning
-    # specific files, there is no need to rescan fully for missing photos.
-    if full_scan or (scan_directory == user.scan_directory and not scan_files):
+def _enqueue_post_processing_jobs(
+    user, full_scan, force_im2txt, queue_scan_missing
+):
+    """Enqueue the heavy jobs that run after image processing."""
+    if queue_scan_missing:
         AsyncTask(scan_missing_photos, user, uuid.uuid4()).run()
 
     # Run repair job to fix any previously ungrouped file variants
@@ -382,6 +466,40 @@ def _queue_followup_jobs(user, full_scan, scan_directory, scan_files, force_im2t
     if settings.FEATURE_FACE_DETECTION:
         chain.append(scan_faces, user, uuid.uuid4(), full_scan)
     chain.run()
+
+
+def _queue_followup_jobs(
+    user,
+    full_scan,
+    scan_directory,
+    scan_files,
+    force_im2txt,
+    image_group_id,
+    expected_count,
+):
+    """Defer heavy jobs until this scan's queued image groups have completed."""
+    queue_scan_missing = bool(
+        full_scan or (scan_directory == user.scan_directory and not scan_files)
+    )
+    if expected_count:
+        util.logger.info(
+            f"Scheduling post-processing sentinel for {expected_count} image groups"
+        )
+        AsyncTask(
+            wait_for_group_and_queue_post_processing,
+            image_group_id,
+            user.id,
+            full_scan,
+            bool(force_im2txt),
+            queue_scan_missing,
+            expected_count,
+            attempt=1,
+        ).run()
+        return
+
+    _enqueue_post_processing_jobs(
+        user, full_scan, force_im2txt, queue_scan_missing
+    )
 
 
 def scan_photos(
@@ -470,7 +588,7 @@ def scan_photos(
         # === PHASE 2: Process each file group ===
         # Process groups sequentially to avoid race conditions
         # Each group creates one Photo with all file variants
-        _queue_scan_work(
+        image_group_id = _queue_scan_work(
             user, groups_to_process, metadata_paths, full_scan, last_scan, job_id
         )
 
@@ -487,7 +605,15 @@ def scan_photos(
         # Check for photos with missing aspect ratios but existing thumbnails
         backfill_missing_aspect_ratios(user)
 
-        _queue_followup_jobs(user, full_scan, scan_directory, scan_files, force_im2txt)
+        _queue_followup_jobs(
+            user,
+            full_scan,
+            scan_directory,
+            scan_files,
+            force_im2txt,
+            image_group_id,
+            len(groups_to_process),
+        )
 
     except Exception as e:
         util.logger.exception("An error occurred: ")

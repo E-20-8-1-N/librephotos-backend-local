@@ -350,18 +350,32 @@ class LastScanBaselineTest(ScanPhotosCharacterizationBase):
 
 
 class FollowUpTasksTest(ScanPhotosCharacterizationBase):
+    def _post_processing_sentinel(self, result):
+        sentinels = result["tasks"].find(
+            scan_jobs.wait_for_group_and_queue_post_processing
+        )
+        self.assertEqual(len(sentinels), 1)
+        return sentinels[0]
+
     def test_scan_missing_photos_queued_for_default_directory_scan(self):
         res = self.run_scan(walk_result=["/p/a.jpg"])
-        self.assertEqual(len(res["tasks"].find(scan_jobs.scan_missing_photos)), 1)
+        _func, args, _kwargs = self._post_processing_sentinel(res)
+        self.assertTrue(args[4])
+        self.assertEqual(args[5], 1)
+        group_task = res["tasks"].find(scan_jobs.handle_file_group)[0]
+        self.assertEqual(args[0], group_task[2]["group"])
+        self.assertEqual(res["tasks"].find(scan_jobs.scan_missing_photos), [])
 
     def test_scan_missing_photos_skipped_for_custom_directory(self):
         other = os.path.join(self.media_root.name, "other")
         res = self.run_scan(walk_result=["/p/a.jpg"], scan_directory=other)
-        self.assertEqual(res["tasks"].find(scan_jobs.scan_missing_photos), [])
+        _func, args, _kwargs = self._post_processing_sentinel(res)
+        self.assertFalse(args[4])
 
     def test_scan_missing_photos_skipped_when_scanning_specific_files(self):
         res = self.run_scan(walk_result=["/p/a.jpg"], scan_files=["/p/a.jpg"])
-        self.assertEqual(res["tasks"].find(scan_jobs.scan_missing_photos), [])
+        _func, args, _kwargs = self._post_processing_sentinel(res)
+        self.assertFalse(args[4])
 
     def test_full_scan_always_queues_scan_missing_photos(self):
         other = os.path.join(self.media_root.name, "other")
@@ -371,7 +385,8 @@ class FollowUpTasksTest(ScanPhotosCharacterizationBase):
             scan_files=["/p/a.jpg"],
             full_scan=True,
         )
-        self.assertEqual(len(res["tasks"].find(scan_jobs.scan_missing_photos)), 1)
+        _func, args, _kwargs = self._post_processing_sentinel(res)
+        self.assertTrue(args[4])
 
     def test_repair_job_always_queued(self):
         res = self.run_scan(walk_result=[])
@@ -383,13 +398,12 @@ class FollowUpTasksTest(ScanPhotosCharacterizationBase):
         res = self.run_scan(walk_result=["/p/a.jpg"])
         self.assertEqual(res["tasks"].find(scan_jobs.generate_tags), [])
         self.assertEqual(res["tasks"].find(scan_jobs.add_geolocation), [])
-        chain_funcs = [entry[0] for entry in res["chain"].appended]
-        self.assertEqual(chain_funcs, [scan_jobs.batch_calculate_clip_embedding])
-        self.assertTrue(res["chain"].ran)
+        self._post_processing_sentinel(res)
+        self.assertIsNone(res["chain"])
 
     def test_feature_flags_on_queue_optional_jobs(self):
         res = self.run_scan(
-            walk_result=["/p/a.jpg"],
+            walk_result=[],
             full_scan=True,
             flags={
                 "FEATURE_SCENE_CLASSIFICATION": True,
