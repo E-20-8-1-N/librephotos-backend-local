@@ -244,8 +244,8 @@ class PhotoCaption(models.Model):
             caption, tag = generate_image_caption(image_path, file_ext)
 
             captions["im2txt"] = caption
-            if tag is not None:
-                captions["tag"] = tag
+            if tag:
+                captions["im2txt_tag"] = tag
                 self.captions_json = captions
                 self._update_caption_generator_album_things(tag)
             else:
@@ -374,8 +374,8 @@ class PhotoCaption(models.Model):
             if caption:
                 self.captions_json["im2txt"] = caption
 
-            if tag is not None:
-                self.captions_json["tag"] = tag
+            if tag:
+                self.captions_json["im2txt_tag"] = tag
                 self._update_caption_generator_album_things(tag)
 
             self.recreate_search_captions()
