@@ -35,7 +35,7 @@ SERVICES = {
     # "llm": 8008,
     # "image_captioning": 8007,
     "exif": 8010,
-    "tags": 8011,
+    # "tags": 8011,
     "ocr": 8012,
 }
 

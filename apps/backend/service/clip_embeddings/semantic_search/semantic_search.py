@@ -21,7 +21,6 @@ class SemanticSearch:
         del self.model
         self.model = None
         gc.collect()
-        import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         self.model_is_loaded = False
@@ -37,20 +36,31 @@ class SemanticSearch:
         if type(img_paths) is list:
             for path in img_paths:
                 try:
-                    with PIL.Image.open(path) as img:
-                        imgs.append(img)
+                    img = PIL.Image.open(path)
+                    img.load()  # Force pixel data into memory
+                    imgs.append(img)
                 except PIL.UnidentifiedImageError:
                     print(f"Error loading image: {path}")
+                except Exception as e:
+                    print(f"Error loading image {path}: {e}")
         else:
             try:
-                with PIL.Image.open(img_paths) as img:
-                    imgs.append(img)
+                img = PIL.Image.open(img_paths)
+                img.load()
+                imgs.append(img)
             except PIL.UnidentifiedImageError:
                 print(f"Error loading image: {img_paths}")
+            except Exception as e:
+                print(f"Error loading image {img_paths}: {e}")
 
         try:
             with torch.no_grad():
                 imgs_emb = self.model.encode(imgs, batch_size=32, convert_to_tensor=True)
+            # Close all PIL images to free memory
+            for img in imgs:
+                img.close()
+            del imgs
+
             if torch.cuda.is_available():
                 if type(img_paths) is list:
                     magnitudes = list(

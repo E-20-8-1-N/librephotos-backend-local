@@ -50,7 +50,7 @@ def generate_face_embeddings(user, job_id: UUID):
         lrj.update_progress(current=0, target=faces.count())
         db.connections.close_all()
 
-        for idx, face in enumerate(faces):
+        for idx, face in enumerate(faces.iterator()):
             # Check for cancellation periodically
             if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
                 util.logger.info("Generate face embeddings job cancelled")
@@ -117,7 +117,7 @@ def generate_tags(user, job_id: UUID, full_scan=False):
         lrj.update_progress(current=0, target=existing_photos.count())
         db.connections.close_all()
 
-        for idx, photo in enumerate(existing_photos):
+        for idx, photo in enumerate(existing_photos.iterator()):
             # Check for cancellation periodically
             if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
                 util.logger.info("Generate tags job cancelled")
@@ -622,7 +622,7 @@ def add_geolocation(user, job_id: UUID, full_scan=False):
         lrj.update_progress(current=0, target=existing_photos.count())
         db.connections.close_all()
 
-        for idx, photo in enumerate(existing_photos):
+        for idx, photo in enumerate(existing_photos.iterator()):
             # Check for cancellation periodically
             if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
                 util.logger.info("Add geolocation job cancelled")
@@ -694,7 +694,7 @@ def scan_faces(user, job_id: UUID, full_scan=False):
         lrj.update_progress(current=0, target=existing_photos.count())
         db.connections.close_all()
 
-        for idx, photo in enumerate(existing_photos):
+        for idx, photo in enumerate(existing_photos.iterator()):
             # Check for cancellation periodically
             if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
                 util.logger.info("Scan faces job cancelled")
