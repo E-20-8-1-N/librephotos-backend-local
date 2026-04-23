@@ -124,7 +124,7 @@ def _untagged_photos(user):
         & (
             Q(caption_instance__isnull=True)
             | Q(caption_instance__captions_json__isnull=True)
-            | Q(caption_instance__captions_json__tag__isnull=True)
+            | Q(caption_instance__captions_json__im2txt_tag__isnull=True)
         )
     )
 
