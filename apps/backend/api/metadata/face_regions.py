@@ -149,9 +149,8 @@ def get_face_region_tags(photo):
     # Get thumbnail dimensions
     try:
         thumb_path = photo.thumbnail.thumbnail_big.path
-        thumb_image = PIL.Image.open(thumb_path)
-        thumb_width, thumb_height = thumb_image.size
-        thumb_image.close()
+        with PIL.Image.open(thumb_path) as thumb_image:
+            thumb_width, thumb_height = thumb_image.size
     except Exception:
         logger.error(
             f"Cannot open thumbnail for photo {photo.image_hash}, skipping face tags"

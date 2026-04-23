@@ -1,10 +1,10 @@
 import datetime
+import gc
 import uuid
 
 import numpy as np
 from bulk_update.helper import bulk_update
 from django.conf import settings
-from django.core.paginator import Paginator
 from django.db.models import Q
 from django_q.tasks import AsyncTask
 from hdbscan import HDBSCAN
@@ -41,13 +41,11 @@ def collect_visualizable_faces(user, inferred: bool) -> tuple[list, list]:
     face_encoding = []
     faces_with_encoding = []
     faces = Face.objects.filter(Q(photo__owner=user) & Q(deleted=False))
-    paginator = Paginator(faces, 5000)
 
-    for page in range(1, paginator.num_pages + 1):
-        for face in paginator.page(page).object_list:
-            if ((not face.person) or inferred) and face.encoding:
-                face_encoding.append(face.get_encoding_array())
-                faces_with_encoding.append(face)
+    for face in faces.iterator():
+        if ((not face.person_id) or inferred) and face.encoding:
+            face_encoding.append(face.get_encoding_array())
+            faces_with_encoding.append(face)
 
     return face_encoding, faces_with_encoding
 
@@ -128,7 +126,7 @@ def collect_face_encodings(user: User) -> dict:
     face: Face
     for face in Face.objects.filter(
         photo__owner=user, encoding__isnull=False
-    ).prefetch_related("person"):
+    ).prefetch_related("person").iterator():
         if not face.encoding:
             continue
         enc = face.get_encoding_array()
@@ -189,7 +187,13 @@ def create_all_clusters(user: User, lrj: LongRunningJob = None) -> int:
 
     clt = build_clusterer(user, target_count)
     logger.info("Before finding clusters")
-    clt.fit(np.array(data["encoding"]))
+    # clustering the encodings — convert to numpy and free the Python list
+    encodings_np = np.array(data["encoding"])
+    data["encoding"] = None
+    gc.collect()
+    clt.fit(encodings_np)
+    del encodings_np
+    gc.collect()
     logger.info("After finding clusters")
 
     sortedIndexes = group_indexes_by_label(clt.labels_)
@@ -287,7 +291,7 @@ def split_faces_by_label(user: User) -> tuple[dict, dict]:
         & Q(encoding__isnull=False)
         & ~Q(encoding="")
         & Q(deleted=False)
-    ).prefetch_related("person"):
+    ).prefetch_related("person").iterator():
         if not face.person:
             data_unknown["encoding"].append(face.get_encoding_array())
             data_unknown["id"].append(face.id)
@@ -427,6 +431,14 @@ def train_faces(user: User, job_id) -> bool:
             )
             logger.info("After fitting")
 
+        data_unknown_encoding_np = (
+            np.array(data_unknown["encoding"])
+            if data_unknown["encoding"]
+            else None
+        )
+        data_unknown["encoding"] = None
+        gc.collect()
+
         add_cluster_centroids(user, data_known)
         filtered_encodings, filtered_ids = filter_data(
             data_known["encoding"], data_known["id"]
@@ -439,10 +451,12 @@ def train_faces(user: User, job_id) -> bool:
 
         # Collect the probabilities for each unknown face. The probabilities returned
         # are arrays in the same order as the people IDs in the original training set
-        if data_unknown["encoding"]:
+        if data_unknown_encoding_np is not None and len(data_unknown_encoding_np) > 0:
             filtered_unknown_encodings, filtered_unknown_ids = filter_data(
-                data_unknown["encoding"], data_unknown["id"]
+                list(data_unknown_encoding_np), data_unknown["id"]
             )
+            del data_unknown_encoding_np
+            gc.collect()
             data_unknown["encoding"] = list(filtered_unknown_encodings)
             data_unknown["id"] = [int(face_id) for face_id in filtered_unknown_ids]
 

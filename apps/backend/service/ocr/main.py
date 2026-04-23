@@ -1,9 +1,9 @@
 """OCR sidecar: Flask + gevent WSGIServer on port 8012.
 
-Mirrors service/tags/main.py: a lazily-created singleton engine, ``last_request_time``
-stamped at the START of each request (the supervisor restarts services idle for
-more than 120s, and a legitimate multi-second OCR run must not be mistaken for
-idle), and a /health endpoint of the same shape.
+Uses a lazily-created singleton engine, with ``last_request_time`` stamped at the
+START of each request (the supervisor restarts services idle for more than 120s,
+and a legitimate multi-second OCR run must not be mistaken for idle), and a
+/health endpoint matching the other sidecars.
 
 Importing this module never starts the server or loads the model, so the engine
 is fully testable via ppocr.* without touching Flask/gevent.

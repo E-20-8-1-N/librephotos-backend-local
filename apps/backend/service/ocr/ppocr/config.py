@@ -20,10 +20,9 @@ import os
 
 import numpy as np
 
-# Production install location.  Bundles ship to ``<models>/ocr/ppocrv6_<tier>``
-# under the protected media data_models root (mirrors service/tags/siglip2,
-# which hardcodes ``/protected_media/data_models/siglip2``).  Tests point
-# ``OCR_MODEL_DIR`` at the extracted test bundle instead.
+# Production install location. Bundles ship to ``<models>/ocr/ppocrv6_<tier>``
+# under the protected media data_models root. Tests point ``OCR_MODEL_DIR`` at
+# the extracted test bundle instead.
 MODEL_DIR_ENV = "OCR_MODEL_DIR"
 DEFAULT_MODEL_DIR = os.path.join(
     os.sep, "protected_media", "data_models", "ocr", "ppocrv6_small"
