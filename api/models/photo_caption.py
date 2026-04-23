@@ -386,61 +386,61 @@ class PhotoCaption(models.Model):
             )
             raise e
 
-    def _update_places365_album_things(self, res_places365):
-        """Create/update AlbumThing entries for Places365 tags."""
-        # Remove old album associations for this photo
-        for album_thing in api.models.album_thing.AlbumThing.objects.filter(
-            Q(photos__in=[self.photo])
-            & (
-                Q(thing_type="places365_attribute")
-                | Q(thing_type="places365_category")
-            )
-            & Q(owner=self.photo.owner)
-        ).all():
-            album_thing.photos.remove(self.photo)
-            album_thing.save()
+    # def _update_places365_album_things(self, res_places365):
+    #     """Create/update AlbumThing entries for Places365 tags."""
+    #     # Remove old album associations for this photo
+    #     for album_thing in api.models.album_thing.AlbumThing.objects.filter(
+    #         Q(photos__in=[self.photo])
+    #         & (
+    #             Q(thing_type="places365_attribute")
+    #             | Q(thing_type="places365_category")
+    #         )
+    #         & Q(owner=self.photo.owner)
+    #     ).all():
+    #         album_thing.photos.remove(self.photo)
+    #         album_thing.save()
 
-        if "attributes" in res_places365:
-            for attribute in res_places365["attributes"]:
-                album_thing = api.models.album_thing.get_album_thing(
-                    title=attribute,
-                    owner=self.photo.owner,
-                    thing_type="places365_attribute",
-                )
-                album_thing.photos.add(self.photo)
-                album_thing.save()
+    #     if "attributes" in res_places365:
+    #         for attribute in res_places365["attributes"]:
+    #             album_thing = api.models.album_thing.get_album_thing(
+    #                 title=attribute,
+    #                 owner=self.photo.owner,
+    #                 thing_type="places365_attribute",
+    #             )
+    #             album_thing.photos.add(self.photo)
+    #             album_thing.save()
 
-        if "categories" in res_places365:
-            for category in res_places365["categories"]:
-                album_thing = api.models.album_thing.get_album_thing(
-                    title=category,
-                    owner=self.photo.owner,
-                    thing_type="places365_category",
-                )
-                album_thing.photos.add(self.photo)
-                album_thing.save()
+    #     if "categories" in res_places365:
+    #         for category in res_places365["categories"]:
+    #             album_thing = api.models.album_thing.get_album_thing(
+    #                 title=category,
+    #                 owner=self.photo.owner,
+    #                 thing_type="places365_category",
+    #             )
+    #             album_thing.photos.add(self.photo)
+    #             album_thing.save()
 
-    def _update_siglip2_album_things(self, siglip2_result):
-        """Create/update AlbumThing entries for SigLIP 2 tags."""
-        tags = siglip2_result.get("tags", [])
+    # def _update_siglip2_album_things(self, siglip2_result):
+    #     """Create/update AlbumThing entries for SigLIP 2 tags."""
+    #     tags = siglip2_result.get("tags", [])
 
-        # Remove old siglip2 album associations for this photo
-        for album_thing in api.models.album_thing.AlbumThing.objects.filter(
-            Q(photos__in=[self.photo])
-            & Q(thing_type="siglip2_tag")
-            & Q(owner=self.photo.owner)
-        ).all():
-            album_thing.photos.remove(self.photo)
-            album_thing.save()
+    #     # Remove old siglip2 album associations for this photo
+    #     for album_thing in api.models.album_thing.AlbumThing.objects.filter(
+    #         Q(photos__in=[self.photo])
+    #         & Q(thing_type="siglip2_tag")
+    #         & Q(owner=self.photo.owner)
+    #     ).all():
+    #         album_thing.photos.remove(self.photo)
+    #         album_thing.save()
 
-        for tag in tags:
-            album_thing = api.models.album_thing.get_album_thing(
-                title=tag,
-                owner=self.photo.owner,
-                thing_type="siglip2_tag",
-            )
-            album_thing.photos.add(self.photo)
-            album_thing.save()
+    #     for tag in tags:
+    #         album_thing = api.models.album_thing.get_album_thing(
+    #             title=tag,
+    #             owner=self.photo.owner,
+    #             thing_type="siglip2_tag",
+    #         )
+    #         album_thing.photos.add(self.photo)
+    #         album_thing.save()
 
     def _update_caption_generator_album_things(self, tag_result):
         """Create/update AlbumThing entries for caption-generator tags."""

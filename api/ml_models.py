@@ -31,14 +31,14 @@ ML_MODELS = [
         "unpack-command": "tar -zxC",
         "target-dir": "clip-embeddings",
     },
-    {
-        "id": 2,
-        "name": "places365",
-        "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/places365.tar.gz",
-        "type": MlTypes.CATEGORIES,
-        "unpack-command": "tar -zxC",
-        "target-dir": "places365",
-    },
+    # {
+    #     "id": 2,
+    #     "name": "places365",
+    #     "url": "https://github.com/LibrePhotos/librephotos-docker/releases/download/0.1/places365.tar.gz",
+    #     "type": MlTypes.CATEGORIES,
+    #     "unpack-command": "tar -zxC",
+    #     "target-dir": "places365",
+    # },
     # {
     #     "id": 3,
     #     "name": "im2txt",
@@ -47,14 +47,14 @@ ML_MODELS = [
     #     "unpack-command": "tar -zxC",
     #     "target-dir": "im2txt",
     # },
-    {
-        "id": 4,
-        "name": "resnet18",
-        "url": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
-        "type": MlTypes.CATEGORIES,
-        "unpack-command": None,
-        "target-dir": "resnet18-5c106cde.pth",
-    },
+    # {
+    #     "id": 4,
+    #     "name": "resnet18",
+    #     "url": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
+    #     "type": MlTypes.CATEGORIES,
+    #     "unpack-command": None,
+    #     "target-dir": "resnet18-5c106cde.pth",
+    # },
     {
         "id": 5,
         "name": "buffalo_sc",
@@ -110,24 +110,24 @@ ML_MODELS = [
         "unpack-command": "zip",
         "target-dir": "face_recognition/models/buffalo_m",
     },
-    {
-        "id": 11,
-        "name": "siglip2",
-        "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-384-ONNX/resolve/main/onnx/vision_model.onnx",
-        "type": MlTypes.TAGGING,
-        "unpack-command": None,
-        "target-dir": "siglip2/vision_model.onnx",
-        "additional_files": [
-            {
-                "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-384-ONNX/resolve/main/onnx/text_model.onnx",
-                "target": "siglip2/text_model.onnx",
-            },
-            {
-                "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-384-ONNX/resolve/main/tokenizer.model",
-                "target": "siglip2/tokenizer.model",
-            },
-        ],
-    },
+    # {
+    #     "id": 11,
+    #     "name": "siglip2",
+    #     "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-384-ONNX/resolve/main/onnx/vision_model.onnx",
+    #     "type": MlTypes.TAGGING,
+    #     "unpack-command": None,
+    #     "target-dir": "siglip2/vision_model.onnx",
+    #     "additional_files": [
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-384-ONNX/resolve/main/onnx/text_model.onnx",
+    #             "target": "siglip2/text_model.onnx",
+    #         },
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-384-ONNX/resolve/main/tokenizer.model",
+    #             "target": "siglip2/tokenizer.model",
+    #         },
+    #     ],
+    # },
     {
         "id": 12,
         "name": "buffalo_l",
