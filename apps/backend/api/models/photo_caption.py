@@ -64,11 +64,10 @@ def ensure_caption_generator_ready() -> bool:
             )
             container.start()
     except Exception as e:
-        util.logger.error(
+        util.logger.exception(
             "Failed to start caption-generator container '%s': %s",
             CAPTION_GENERATOR_HOST,
             e,
-            exc_info=True,
         )
         return False
 
@@ -183,7 +182,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                 util.logger.error(f"Failed to generate caption for {image_path}: {e}")
                 break
     except Exception as e:
-        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+        util.logger.exception(f"Failed to generate caption for {image_path}: {e}")
         pass
     finally:
         import gc
@@ -405,29 +404,6 @@ class PhotoCaption(models.Model):
                 f"{self.photo.main_file.path if self.photo.main_file else 'no main file'}"
             )
             raise e
-
-    def _update_places365_album_things(self, res_places365):
-        """Create/update AlbumThing entries for Places365 tags."""
-        self._detach_photo_from_album_things(
-            ["places365_attribute", "places365_category"]
-        )
-
-        if "attributes" in res_places365:
-            self._attach_photo_to_album_things(
-                res_places365["attributes"], "places365_attribute"
-            )
-
-        if "categories" in res_places365:
-            self._attach_photo_to_album_things(
-                res_places365["categories"], "places365_category"
-            )
-
-    def _update_siglip2_album_things(self, siglip2_result):
-        """Create/update AlbumThing entries for SigLIP 2 tags."""
-        tags = siglip2_result.get("tags", [])
-
-        self._detach_photo_from_album_things(["siglip2_tag"])
-        self._attach_photo_to_album_things(tags, "siglip2_tag")
 
     def _update_caption_generator_album_things(self, tag_result):
         """Create/update AlbumThing entries for caption-generator tags."""
