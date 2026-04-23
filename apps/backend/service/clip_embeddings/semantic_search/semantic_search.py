@@ -31,7 +31,7 @@ class SemanticSearch:
         self.model = SentenceTransformer(model)
 
     def open_images(self, img_paths):
-        paths = img_paths if type(img_paths) is list else [img_paths]
+        paths = img_paths if isinstance(img_paths, list) else [img_paths]
         imgs = []
         for path in paths:
             image = None
@@ -49,17 +49,13 @@ class SemanticSearch:
                 print(f"Error loading image {path}: {e}")
         return imgs
 
-    def batch_embeddings(self, imgs_emb, on_cuda):
-        if on_cuda:
-            magnitudes = list(map(lambda x: np.linalg.norm(x.cpu().numpy()), imgs_emb))
-        else:
-            magnitudes = map(np.linalg.norm, imgs_emb)
-        return imgs_emb, magnitudes
+    def batch_embeddings(self, imgs_emb):
+        magnitudes = np.linalg.norm(imgs_emb, axis=1)
+        return [row for row in imgs_emb], magnitudes.tolist()
 
-    def single_embedding(self, imgs_emb, on_cuda):
-        emb = imgs_emb[0]
-        img_emb = emb.cpu().numpy().tolist() if on_cuda else emb.tolist()
-        magnitude = np.linalg.norm(img_emb)
+    def single_embedding(self, imgs_emb):
+        img_emb = imgs_emb[0].tolist()
+        magnitude = float(np.linalg.norm(img_emb))
         return img_emb, magnitude
 
     def calculate_clip_embeddings(self, img_paths, model):
@@ -68,27 +64,42 @@ class SemanticSearch:
         imgs = self.open_images(img_paths)
 
         try:
-            with torch.no_grad():
-                imgs_emb = self.model.encode(
-                    imgs, batch_size=32, convert_to_tensor=True
+            with torch.inference_mode():
+                imgs_emb_tensor = self.model.encode(
+                    imgs, batch_size=16, convert_to_tensor=True
                 )
-            on_cuda = torch.cuda.is_available()
-            if type(img_paths) is list:
-                return self.batch_embeddings(imgs_emb, on_cuda)
-            return self.single_embedding(imgs_emb, on_cuda)
+                imgs_emb_np = imgs_emb_tensor.detach().cpu().numpy()
+            del imgs_emb_tensor
+
+            if isinstance(img_paths, list):
+                result = self.batch_embeddings(imgs_emb_np)
+            else:
+                result = self.single_embedding(imgs_emb_np)
+
+            del imgs_emb_np
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return result
         except Exception as e:
             print(f"Error in calculating clip embeddings: {e}")
             raise
         finally:
             for image in imgs:
-                image.close()
+                try:
+                    image.close()
+                except Exception:
+                    pass
 
     def calculate_query_embeddings(self, query, model):
         if not self.model_is_loaded:
             self.load(model)
 
-        with torch.no_grad():
-            query_emb = self.model.encode([query], convert_to_tensor=True)[0].tolist()
+        with torch.inference_mode():
+            q_tensor = self.model.encode([query], convert_to_tensor=True)
+            query_emb = q_tensor[0].detach().cpu().numpy().tolist()
+        del q_tensor
         magnitude = np.linalg.norm(query_emb)
-
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return query_emb, magnitude
