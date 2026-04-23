@@ -31,7 +31,7 @@ def batch_calculate_clip_embedding(user):
     else:
         torch.multiprocessing.set_start_method("spawn", force=True)
 
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
     util.logger.info(f"Using threads: {torch.get_num_threads()}")
 
     done_count = 0
