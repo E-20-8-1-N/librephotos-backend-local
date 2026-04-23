@@ -126,7 +126,7 @@ def collect_face_encodings(user: User) -> dict:
     face: Face
     for face in Face.objects.filter(
         photo__owner=user, encoding__isnull=False
-    ).prefetch_related("person").iterator():
+    ).prefetch_related("person").iterator(chunk_size=2000):
         if not face.encoding:
             continue
         enc = face.get_encoding_array()
@@ -291,7 +291,7 @@ def split_faces_by_label(user: User) -> tuple[dict, dict]:
         & Q(encoding__isnull=False)
         & ~Q(encoding="")
         & Q(deleted=False)
-    ).prefetch_related("person").iterator():
+    ).prefetch_related("person").iterator(chunk_size=2000):
         if not face.person:
             data_unknown["encoding"].append(face.get_encoding_array())
             data_unknown["id"].append(face.id)
