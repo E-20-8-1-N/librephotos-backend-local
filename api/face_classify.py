@@ -127,7 +127,7 @@ def create_all_clusters(user: User, lrj: LongRunningJob = None) -> int:
     encoding_length: int | None = None
     for face in Face.objects.filter(
         photo__owner=user, encoding__isnull=False
-    ).prefetch_related("person").iterator():
+    ).prefetch_related("person").iterator(chunk_size=2000):
         if not face.encoding:
             continue
         enc = face.get_encoding_array()
@@ -302,7 +302,7 @@ def train_faces(user: User, job_id) -> bool:
             & Q(encoding__isnull=False)
             & ~Q(encoding="")
             & Q(deleted=False)
-        ).prefetch_related("person").iterator():
+        ).prefetch_related("person").iterator(chunk_size=2000):
             if not face.person:
                 data_unknown["encoding"].append(face.get_encoding_array())
                 data_unknown["id"].append(face.id)
