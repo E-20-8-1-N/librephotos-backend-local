@@ -36,7 +36,7 @@ def _run_user_scan(user, job_id):
                 )
                 return
 
-        scan_photos(user, False, job_id, user.scan_directory, None, True)
+        scan_photos(user, False, job_id, user.scan_directory, None, True, True)
     except Exception:
         util.logger.exception(
             "auto scan thread failed for user %s",

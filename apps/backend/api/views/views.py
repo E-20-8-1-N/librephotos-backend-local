@@ -196,7 +196,7 @@ def _run_backend_user_scan(user, job_id, scan_directory):
                 )
                 return
 
-        scan_photos(user, False, job_id, scan_directory, None, True)
+        scan_photos(user, False, job_id, scan_directory, None, True, True)
     except Exception:
         logger.exception(
             "backend scan thread failed for user %s",
@@ -695,7 +695,7 @@ class ScanUploadedPhotosView(APIView):
             chain.append(download_models, request.user)
         try:
             job_id = uuid.uuid4()
-            chain.append(scan_photos, request.user, False, job_id, request.user.scan_directory, None, False)
+            chain.append(scan_photos, request.user, False, job_id, request.user.scan_directory)
             chain.run()
             return Response({"status": True, "job_id": job_id})
         except BaseException:
