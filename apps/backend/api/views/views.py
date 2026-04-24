@@ -23,7 +23,6 @@ from django.views.decorators.vary import vary_on_cookie
 from django_q.tasks import AsyncTask, Chain
 from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets
-from rest_framework.authentication import BasicAuthentication
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView, exception_handler
@@ -177,10 +176,10 @@ def _run_backend_user_scan(user, job_id, scan_directory):
     generate_im2txt_captions, add_geolocation, etc.) in the shared
     django-q FIFO queue.
 
-    Heavy per-file work is still dispatched to django-q workers from inside
-    scan_photos(), but queuing happens in parallel for each caller, so
-    thumbnails for newly added files appear without waiting for any in-flight
-    heavy job to finish.
+    Image groups are processed by a local thread pool inside scan_photos(), then
+    the heavier tagging, geolocation, embedding, and face jobs are dispatched to
+    django-q. This lets thumbnails appear without waiting for an in-flight heavy
+    job to finish.
     """
     from django import db
 
@@ -195,7 +194,14 @@ def _run_backend_user_scan(user, job_id, scan_directory):
                 )
                 return
 
-        scan_photos(user, False, job_id, scan_directory, None, True)
+        scan_photos(
+            user,
+            False,
+            job_id,
+            scan_directory,
+            force_im2txt=True,
+            inline_image_processing=True,
+        )
     except Exception:
         logger.exception(
             "backend scan thread failed for user %s",
@@ -248,9 +254,9 @@ class BackendScanPhotosView(APIView):
 
             # Run orchestration in a daemon thread so this request returns
             # immediately and the scan does not have to wait for a django-q
-            # worker slot behind long-running heavy jobs. scan_photos() will
-            # enqueue per-file (thumbnail) tasks as soon as it starts running,
-            # so thumbnails for newly added files show up quickly.
+            # worker slot behind long-running heavy jobs. scan_photos() handles
+            # image groups in its local thread pool, so thumbnails for newly
+            # added files show up quickly.
             threading.Thread(
                 target=_run_backend_user_scan,
                 args=(user, job_id, user.scan_directory),
@@ -667,7 +673,7 @@ class ScanUploadedPhotosView(APIView):
             chain.append(download_models, request.user)
         try:
             job_id = uuid.uuid4()
-            chain.append(scan_photos, request.user, False, job_id, request.user.scan_directory, None, False)
+            chain.append(scan_photos, request.user, False, job_id, request.user.scan_directory)
             chain.run()
             return Response({"status": True, "job_id": job_id})
         except BaseException:

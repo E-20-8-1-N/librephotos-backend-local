@@ -89,6 +89,8 @@ class ScanPhotosCharacterizationBase(TestCase):
         walk_directory_side_effect=None,
         job_id=None,
         flags=None,
+        inline_image_processing=False,
+        inline_workers=4,
     ):
         """Run ``scan_photos`` with every external effect recorded/mocked.
 
@@ -132,6 +134,9 @@ class ScanPhotosCharacterizationBase(TestCase):
                     scan_jobs, "walk_files", side_effect=fake_walk
                 ) as walk_files,
                 patch.object(scan_jobs, "photo_scanner") as photo_scanner,
+                patch.object(
+                    scan_jobs, "_process_file_group_inline"
+                ) as process_file_group_inline,
                 patch.object(scan_jobs, "backfill_missing_aspect_ratios") as backfill,
                 patch.object(scan_jobs.db.connections, "close_all"),
                 select_patch as select_mock,
@@ -142,6 +147,8 @@ class ScanPhotosCharacterizationBase(TestCase):
                     job_id or self.job_id,
                     scan_directory=scan_directory,
                     scan_files=scan_files,
+                    inline_image_processing=inline_image_processing,
+                    inline_workers=inline_workers,
                 )
 
         return {
@@ -149,6 +156,7 @@ class ScanPhotosCharacterizationBase(TestCase):
             "walk_directory": walk_directory,
             "walk_files": walk_files,
             "photo_scanner": photo_scanner,
+            "process_file_group_inline": process_file_group_inline,
             "backfill": backfill,
             "select": select_mock,
             "chain": ChainRecorder.last,
@@ -252,6 +260,25 @@ class GroupingAndQueueingTest(ScanPhotosCharacterizationBase):
         )
         self.assertEqual(res["tasks"].find(scan_jobs.handle_file_group), [])
         self.assertEqual(res["photo_scanner"].call_count, 1)
+
+    def test_inline_mode_processes_images_and_metadata_without_group_sentinels(self):
+        res = self.run_scan(
+            walk_result=["/p/a.jpg", "/p/b.jpg", "/p/a.xmp"],
+            inline_image_processing=True,
+            inline_workers=2,
+        )
+
+        self.assertEqual(res["process_file_group_inline"].call_count, 2)
+        self.assertEqual(res["tasks"].find(scan_jobs.handle_file_group), [])
+        self.assertEqual(
+            res["tasks"].find(scan_jobs.wait_for_group_and_process_metadata), []
+        )
+        self.assertEqual(
+            res["tasks"].find(scan_jobs.wait_for_group_and_queue_post_processing),
+            [],
+        )
+        res["photo_scanner"].assert_called_once()
+        self.assertTrue(res["chain"].ran)
 
 
 class ProgressAndCompletionTest(ScanPhotosCharacterizationBase):

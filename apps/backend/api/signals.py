@@ -21,9 +21,8 @@ def _run_user_scan(user, job_id):
       - a new user's scan does not have to wait for another user's scan_photos
         orchestrator to be dequeued before its own subtasks get queued.
 
-    Heavy per-file work is still dispatched to django-q workers from inside
-    scan_photos(), so worker-pool contention still applies to the actual
-    processing — but queuing happens in parallel for each user.
+    Image groups are processed by a local thread pool inside scan_photos(); the
+    heavier follow-up jobs are dispatched to django-q afterward.
     """
     try:
         if not do_all_models_exist():
@@ -36,7 +35,14 @@ def _run_user_scan(user, job_id):
                 )
                 return
 
-        scan_photos(user, False, job_id, user.scan_directory, None, True)
+        scan_photos(
+            user,
+            False,
+            job_id,
+            user.scan_directory,
+            force_im2txt=True,
+            inline_image_processing=True,
+        )
     except Exception:
         util.logger.exception(
             "auto scan thread failed for user %s",
