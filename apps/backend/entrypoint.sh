@@ -13,10 +13,17 @@ export OPENBLAS_MAIN_FREE=1
 # Force glibc to return freed memory to the OS more aggressively
 export MALLOC_TRIM_THRESHOLD_=65536
 export MALLOC_MMAP_THRESHOLD_=65536
-# Limit PyTorch/MKL threads to reduce per-thread memory overhead
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
-export MKL_NUM_THREADS=${MKL_NUM_THREADS:-2}
-export TORCH_NUM_THREADS=${TORCH_NUM_THREADS:-2}
+# Limit PyTorch/MKL threads to reduce per-thread memory overhead.
+# With multiple subprocess services (clip, face, thumbnail, exif,
+# image_similarity) + gunicorn + qcluster, every extra thread per
+# process multiplies RSS and PID count. 1 is the safe default for
+# CPU-only deployments; override per-service if needed.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+export TORCH_NUM_THREADS=${TORCH_NUM_THREADS:-1}
+# ONNX Runtime (insightface) has its own thread pools.
+export ORT_NUM_THREADS=${ORT_NUM_THREADS:-1}
+export NUMEXPR_MAX_THREADS=${NUMEXPR_MAX_THREADS:-1}
 # Disable PyTorch gradient tracking globally (inference only)
 export PYTORCH_NO_CUDA_MEMORY_CACHING=1
 

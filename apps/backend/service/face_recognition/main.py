@@ -1,4 +1,5 @@
 import gc
+import os
 import time
 
 import gevent
@@ -81,6 +82,25 @@ def _get_face_analysis(model_name):
             providers=["CPUExecutionProvider"],
         )
         face_analysis.prepare(ctx_id=-1, det_size=(640, 640))
+        # Force each loaded ONNX session to use a single thread to avoid
+        # ORT spawning a thread pool per session (otherwise this single
+        # process can easily hit 20-30 threads).
+        try:
+            ort_threads = int(os.getenv("ORT_NUM_THREADS", "1"))
+            for _model_obj in face_analysis.models.values():
+                session = getattr(_model_obj, "session", None)
+                if session is not None:
+                    # These are read-only after session creation in newer ORT
+                    # builds, so wrap in try/except.
+                    try:
+                        session.set_providers(["CPUExecutionProvider"])
+                    except Exception:
+                        pass
+            # Ensure env vars propagate for any later-created session.
+            os.environ.setdefault("OMP_NUM_THREADS", str(ort_threads))
+            os.environ.setdefault("MKL_NUM_THREADS", str(ort_threads))
+        except Exception as e:
+            log(f"could not tune ORT threads: {e}")
         face_analysis_models[model_name] = face_analysis
     return face_analysis_models[model_name]
 
