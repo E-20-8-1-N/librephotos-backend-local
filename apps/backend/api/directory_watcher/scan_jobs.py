@@ -9,6 +9,7 @@ import datetime
 import os
 import uuid
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytz
@@ -400,19 +401,51 @@ def _known_paths(batch_paths):
     )
 
 
+def _process_file_group_inline(user, paths, job_id):
+    try:
+        return handle_file_group(user, paths, job_id)
+    finally:
+        db.connections.close_all()
+
+
 def _queue_scan_work(
-    user, groups_to_process, metadata_paths, full_scan, last_scan, job_id
+    user,
+    groups_to_process,
+    metadata_paths,
+    full_scan,
+    last_scan,
+    job_id,
+    inline_image_processing=False,
+    inline_workers=4,
 ):
     """Queue the image groups, then arrange for the metadata files to follow them."""
     image_group_id = str(uuid.uuid4())
-    for _, paths in groups_to_process:
-        AsyncTask(
-            handle_file_group,
-            user,
-            paths,
-            job_id,
-            group=image_group_id,
-        ).run()
+    if inline_image_processing:
+        util.logger.info(
+            f"Processing {len(groups_to_process)} image groups inline "
+            f"with {inline_workers} worker thread(s)"
+        )
+        if groups_to_process:
+            with ThreadPoolExecutor(max_workers=max(1, inline_workers)) as pool:
+                futures = [
+                    pool.submit(_process_file_group_inline, user, paths, job_id)
+                    for _, paths in groups_to_process
+                ]
+                for future in futures:
+                    try:
+                        future.result()
+                    except Exception:
+                        util.logger.exception("Inline image-group processing failed")
+        db.connections.close_all()
+    else:
+        for _, paths in groups_to_process:
+            AsyncTask(
+                handle_file_group,
+                user,
+                paths,
+                job_id,
+                group=image_group_id,
+            ).run()
 
     if not metadata_paths:
         return image_group_id
@@ -423,6 +456,19 @@ def _queue_scan_work(
         )
         for path in metadata_paths:
             photo_scanner(user, last_scan, full_scan, path, job_id)
+        return image_group_id
+
+    if inline_image_processing:
+        util.logger.info(
+            f"Processing {len(metadata_paths)} metadata files inline after image groups"
+        )
+        for path in metadata_paths:
+            try:
+                photo_scanner(user, last_scan, full_scan, path, job_id)
+            except Exception:
+                util.logger.exception(
+                    f"Failed processing metadata {path} for job {job_id}"
+                )
         return image_group_id
 
     util.logger.info(
@@ -476,12 +522,13 @@ def _queue_followup_jobs(
     force_im2txt,
     image_group_id,
     expected_count,
+    inline_image_processing=False,
 ):
     """Defer heavy jobs until this scan's queued image groups have completed."""
     queue_scan_missing = bool(
         full_scan or (scan_directory == user.scan_directory and not scan_files)
     )
-    if expected_count:
+    if expected_count and not inline_image_processing:
         util.logger.info(
             f"Scheduling post-processing sentinel for {expected_count} image groups"
         )
@@ -509,6 +556,8 @@ def scan_photos(
     scan_directory="",
     scan_files=None,
     force_im2txt=False,
+    inline_image_processing=False,
+    inline_workers=4,
 ):
     """
     Two-phase scan to avoid race conditions with RAW+JPEG grouping.
@@ -530,6 +579,15 @@ def scan_photos(
         scan_directory: Directory to scan (defaults to user's scan_directory)
         scan_files: Optional list of specific files to scan
         force_im2txt: Whether to generate missing image captions after scanning
+        inline_image_processing: If True, process image groups (thumbnail,
+            EXIF, perceptual hash, etc.) directly in this thread via a local
+            ThreadPoolExecutor instead of enqueuing ``handle_file_group`` to
+            django-q. This lets a user's thumbnails appear immediately even
+            when the shared django-q queue is backed up with heavy per-photo
+            ML tasks from another user's scan (generate_tag_job,
+            generate_im2txt_job, etc.).
+        inline_workers: Number of threads to use when ``inline_image_processing``
+            is True.
     """
     if scan_files is None:
         scan_files = []
@@ -589,7 +647,14 @@ def scan_photos(
         # Process groups sequentially to avoid race conditions
         # Each group creates one Photo with all file variants
         image_group_id = _queue_scan_work(
-            user, groups_to_process, metadata_paths, full_scan, last_scan, job_id
+            user,
+            groups_to_process,
+            metadata_paths,
+            full_scan,
+            last_scan,
+            job_id,
+            inline_image_processing,
+            inline_workers,
         )
 
         util.logger.info(f"Scanned {files_found} files in : {scan_directory}")
@@ -613,8 +678,8 @@ def scan_photos(
             force_im2txt,
             image_group_id,
             len(groups_to_process),
+            inline_image_processing,
         )
-
     except Exception as e:
         util.logger.exception("An error occurred: ")
         lrj.fail(error=e)
