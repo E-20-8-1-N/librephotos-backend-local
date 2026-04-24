@@ -175,12 +175,18 @@ PAM_USERS = {
 
 Q_CLUSTER = {
     "name": "DjangORM",
+    # Explicit worker count. Without this, django-q2 defaults to
+    # multiprocessing.cpu_count(), which on typical hosts spawns 4-16
+    # worker processes each carrying a full Django/NumPy/Torch import
+    # (~300-500 MB RSS each). Override with Q_WORKERS env var if needed.
+    "workers": int(os.getenv("Q_WORKERS", "2")),
     "queue_limit": 50,
-    "recycle": 50,
+    "recycle": int(os.getenv("Q_RECYCLE", "25")),
     "timeout": 10000000,
     "retry": 20000000,
     "orm": "default",
-    "max_rss": 300000,
+    # Hard RSS ceiling per worker in KB; worker re-execs when exceeded.
+    "max_rss": int(os.getenv("Q_MAX_RSS_KB", "300000")),
     "poll": 1,
 }
 
