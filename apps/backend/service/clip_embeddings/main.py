@@ -1,5 +1,5 @@
 import time
-
+import os
 import gevent
 from flask import Flask, request
 from gevent.pywsgi import WSGIServer
@@ -15,8 +15,8 @@ def log(message):
 semantic_search_instance = None
 last_request_time = None
 
-# Unload model after 2 minutes of inactivity to free memory
-IDLE_TIMEOUT_SECONDS = 120
+# Unload model after idle timeout to free memory
+IDLE_TIMEOUT_SECONDS = int(os.getenv("CLIP_IDLE_TIMEOUT_SECONDS", "45"))
 
 
 def _idle_unloader():
