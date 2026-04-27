@@ -24,8 +24,8 @@ SUPPORTED_FACE_MODELS = {
     "buffalo_sc",
 }
 
-# Unload models after 2 minutes of inactivity
-IDLE_TIMEOUT_SECONDS = 120
+# Unload models after idle timeout
+IDLE_TIMEOUT_SECONDS = int(os.getenv("FACE_IDLE_TIMEOUT_SECONDS", "60"))
 
 
 def log(message):
