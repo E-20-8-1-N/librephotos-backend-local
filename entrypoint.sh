@@ -25,7 +25,9 @@ export TORCH_NUM_THREADS=${TORCH_NUM_THREADS:-1}
 export ORT_NUM_THREADS=${ORT_NUM_THREADS:-1}
 export NUMEXPR_MAX_THREADS=${NUMEXPR_MAX_THREADS:-1}
 # Disable PyTorch gradient tracking globally (inference only)
-export PYTORCH_NO_CUDA_MEMORY_CACHING=1
+if [[ "${DISABLE_CUDA_CACHE:-0}" = "1" ]]; then
+  export PYTORCH_NO_CUDA_MEMORY_CACHING=1
+fi
 
 mkdir -p /logs
 python manage.py showmigrations | tee /logs/show_migrate.log
