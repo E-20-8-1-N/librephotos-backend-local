@@ -321,7 +321,13 @@ class PhotoSearch(models.Model):
     def update_search_location(self, geolocation_json):
         """Update search location from geolocation data"""
         if geolocation_json and "address" in geolocation_json:
-            self.search_location = geolocation_json["address"]
+            location = geolocation_json["address"]
+            # Append places not already present in the address
+            places = geolocation_json.get("places", [])
+            new_places = [p for p in places if p not in location]
+            if new_places:
+                location += ", " + ", ".join(new_places)
+            self.search_location = location
         elif geolocation_json and "features" in geolocation_json:
             # Handle features format used in tests
             features = geolocation_json["features"]
