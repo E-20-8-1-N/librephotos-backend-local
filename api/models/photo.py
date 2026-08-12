@@ -23,7 +23,22 @@ from api.metadata.tags import Tags
 from api.metadata.writer import write_metadata
 from api.models.file import File
 from api.models.user import User, get_deleted_user
-from api.util import logger
+from api.util import FACE_OVERLAP_IOU_THRESHOLD, calculate_iou, logger
+
+
+def _overlaps_existing_face(existing_face_locations, top, right, bottom, left):
+    """Return True if a new face region overlaps significantly with any
+    existing face (IoU >= FACE_OVERLAP_IOU_THRESHOLD).
+
+    *existing_face_locations* is an iterable of (top, right, bottom, left) tuples.
+    """
+    for ex_top, ex_right, ex_bottom, ex_left in existing_face_locations:
+        iou = calculate_iou(
+            top, right, bottom, left, ex_top, ex_right, ex_bottom, ex_left
+        )
+        if iou >= FACE_OVERLAP_IOU_THRESHOLD:
+            return True
+    return False
 
 
 class VisiblePhotoManager(models.Manager):
@@ -120,6 +135,13 @@ class Photo(models.Model):
     # Camera image sequence number (for burst/sequence detection)
     # From EXIF:ImageNumber or MakerNotes
     image_sequence_number = models.IntegerField(blank=True, null=True)
+
+    # User-controlled orientation override (EXIF Orientation code 1–8).
+    # Stored as the *additional* rotation applied on top of whatever pyvips
+    # auto-orientation produces from the file's own EXIF tag.  Defaults to 1
+    # (identity – no extra rotation).  The value is updated by the rotate
+    # endpoint and is applied when regenerating thumbnails.
+    local_orientation = models.IntegerField(default=1)
 
     objects = models.Manager()
     visible = VisiblePhotoManager()
@@ -242,7 +264,7 @@ class Photo(models.Model):
                 tags_to_write[Tags.DESCRIPTION_IPTC_WRITE] = metadata.caption or ""
             if should_write_metadata_field("keywords"):
                 tags_to_write[Tags.SUBJECT] = metadata.keywords or []
-                tags_to_write[Tags.KEYWORDS_IPTC] = metadata.keywords or []
+                tags_to_write[Tags.IPTC_KEYWORDS] = metadata.keywords or []
             if should_write_metadata_field("copyright"):
                 tags_to_write[Tags.COPYRIGHT_WRITE] = metadata.copyright or ""
                 tags_to_write[Tags.COPYRIGHT_IPTC_WRITE] = metadata.copyright or ""
@@ -350,7 +372,7 @@ class Photo(models.Model):
         if (
             old_gps_lat == float(new_gps_lat)
             and old_gps_lon == float(new_gps_lon)
-            and old_album_places.count() != 0
+            and old_album_places.exists()
             and self.geolocation_json
             and "_v" in self.geolocation_json
             and self.geolocation_json["_v"] == GEOCODE_VERSION
@@ -391,7 +413,7 @@ class Photo(models.Model):
             album_place = api.models.album_place.get_album_place(
                 feature["text"], owner=self.owner
             )
-            if album_place.photos.filter(image_hash=self.image_hash).count() == 0:
+            if not album_place.photos.filter(image_hash=self.image_hash).exists():
                 album_place.geolocation_level = (
                     len(self.geolocation_json["features"]) - geolocation_level
                 )
@@ -409,6 +431,8 @@ class Photo(models.Model):
             return
 
         album_date = self._find_album_date()
+        if album_date is None:
+            return
         city_name = self.geolocation_json["places"][-2]
         if album_date.location and len(album_date.location) > 0:
             prev_value = album_date.location
@@ -423,6 +447,16 @@ class Photo(models.Model):
         album_date.save()
 
     def _extract_faces(self, second_try=False):
+        if (
+            not hasattr(self, "thumbnail")
+            or not self.thumbnail
+            or not self.thumbnail.thumbnail_big
+        ):
+            logger.warning(
+                f"image {self.image_hash}: no thumbnail_big available, skipping face extraction"
+            )
+            return
+
         unknown_cluster: api.models.cluster.Cluster = (
             api.models.cluster.get_unknown_cluster(user=self.owner)
         )
@@ -436,6 +470,13 @@ class Photo(models.Model):
 
             if len(face_locations) == 0:
                 return
+
+            # Fetch existing face locations once to avoid repeated DB queries.
+            existing_face_locations = list(
+                api.models.face.Face.objects.filter(photo=self).values_list(
+                    "location_top", "location_right", "location_bottom", "location_left"
+                )
+            )
 
             for idx_face, face_location in enumerate(face_locations):
                 top, right, bottom, left, person_name = face_location
@@ -452,20 +493,7 @@ class Photo(models.Model):
 
                 image_path = self.image_hash + "_" + str(idx_face) + ".jpg"
 
-                margin = int((right - left) * 0.05)
-                existing_faces = api.models.face.Face.objects.filter(
-                    photo=self,
-                    location_top__lte=top + margin,
-                    location_top__gte=top - margin,
-                    location_right__lte=right + margin,
-                    location_right__gte=right - margin,
-                    location_bottom__lte=bottom + margin,
-                    location_bottom__gte=bottom - margin,
-                    location_left__lte=left + margin,
-                    location_left__gte=left - margin,
-                )
-
-                if existing_faces.count() != 0:
+                if _overlaps_existing_face(existing_face_locations, top, right, bottom, left):
                     continue
 
                 face = api.models.face.Face(
@@ -482,19 +510,22 @@ class Photo(models.Model):
                     person._calculate_face_count()
                     person._set_default_cover_photo()
                 face_io = BytesIO()
+                if face_image.mode in ("RGBA", "P"):
+                    face_image = face_image.convert("RGB")
                 face_image.save(face_io, format="JPEG")
                 face.image.save(image_path, ContentFile(face_io.getvalue()))
                 face_io.close()
                 face.save()
+                existing_face_locations.append((top, right, bottom, left))
             logger.info(f"image {self.image_hash}: {len(face_locations)} face(s) saved")
         except IntegrityError:
             # When using multiple processes, then we can save at the same time, which leads to this error
-            if self.files.count() > 0:
+            if self.files.exists():
                 # print out the location of the image only if we have a path
                 logger.info(f"image {self.main_file.path}: rescan face failed")
             if not second_try:
                 self._extract_faces(True)
-            elif self.files.count() > 0:
+            elif self.files.exists():
                 logger.error(f"image {self.main_file.path}: rescan face failed")
             else:
                 logger.error(f"image {self}: rescan face failed")
@@ -517,7 +548,7 @@ class Photo(models.Model):
                     title=attribute,
                     owner=self.owner,
                 )
-                if album_thing.photos.filter(image_hash=self.image_hash).count() == 0:
+                if not album_thing.photos.filter(image_hash=self.image_hash).exists():
                     album_thing.photos.add(self)
                     album_thing.thing_type = "places365_attribute"
                     album_thing.save()
@@ -528,10 +559,7 @@ class Photo(models.Model):
                     title=category,
                     owner=self.owner,
                 )
-                if album_thing.photos.filter(image_hash=self.image_hash).count() == 0:
-                    album_thing = api.models.album_thing.get_album_thing(
-                        title=category, owner=self.owner
-                    )
+                if not album_thing.photos.filter(image_hash=self.image_hash).exists():
                     album_thing.photos.add(self)
                     album_thing.thing_type = "places365_category"
                     album_thing.save()
@@ -612,6 +640,25 @@ class Photo(models.Model):
 
         # To-Do: Handle wrong file permissions
         return result
+            
+    def delete_duplicate(self, duplicate_path):
+        # To-Do: Handle wrong file permissions
+        for file in self.files.all():
+            if file.path == duplicate_path:
+                if not os.path.isfile(duplicate_path):
+                    logger.info(f"Path does not lead to a valid file: {duplicate_path}")
+                    self.files.remove(file)
+                    file.delete()
+                    self.save()
+                    return False
+                logger.info(f"Removing photo {duplicate_path}")
+                os.remove(duplicate_path)
+                self.files.remove(file)
+                self.save()
+                file.delete()
+                return True
+        logger.info(f"Path is not valid: {duplicate_path}")
+        return False
     
     def all_file_paths(self):
         """Return a list of all physical file paths linked to this Photo."""
@@ -627,6 +674,73 @@ class Photo(models.Model):
             return True
         any_exists = any(os.path.exists(p) for p in paths)
         return not any_exists
+
+    def rotate(self, angle: int = 0, flip_horizontal: bool = False) -> None:
+        """Rotate the photo non-destructively.
+
+        Updates ``local_orientation`` and regenerates thumbnails.  The original
+        file is never modified by this method; the change is stored in the DB
+        and reflected in the regenerated thumbnails.
+
+        Optionally writes the combined orientation to the photo's file (or
+        sidecar) if the owner has ``save_metadata_to_disk`` enabled.
+
+        Args:
+            angle: Clockwise rotation in degrees.  Must be a multiple of 90.
+                Use negative values for counter-clockwise rotation (e.g. -90
+                for 90° CCW).
+            flip_horizontal: If True, apply a horizontal flip on top of the
+                rotation.
+
+        Raises:
+            ValueError: If ``angle`` is not a multiple of 90.
+        """
+        angle = int(angle) % 360  # normalise first so -90 → 270, 360 → 0
+
+        if angle % 90 != 0:
+            raise ValueError("angle must be a multiple of 90 degrees")
+
+        if angle == 0 and not flip_horizontal:
+            return
+
+        from api.util import compose_orientation
+
+        new_orientation = compose_orientation(
+            self.local_orientation,
+            delta_angle_cw=angle,
+            flip_h=flip_horizontal,
+        )
+        self.local_orientation = new_orientation
+        # Bypass _save_metadata – orientation is stored in the DB only for
+        # now; writing to disk is handled separately.
+        self.save(save_metadata=False)
+
+        # Regenerate thumbnails so the UI sees the updated orientation.
+        self.thumbnail._regenerate_thumbnails()
+
+        # Write combined orientation to the file / sidecar when the user has
+        # opted into persisting metadata to disk.
+        user = self.owner
+        if user.save_metadata_to_disk != User.SaveMetadata.OFF:
+            try:
+                exif_orientation = self.metadata.orientation or 1
+            except Exception:
+                exif_orientation = 1
+
+            # Compose the user's local rotation with the original EXIF
+            # orientation so a standards-compliant viewer shows the image
+            # correctly without relying on LibrePhotos-specific DB fields.
+            combined = compose_orientation(
+                exif_orientation,
+                delta_angle_cw=angle,
+                flip_h=flip_horizontal,
+            )
+            use_sidecar = user.save_metadata_to_disk == User.SaveMetadata.SIDECAR_FILE
+            write_metadata(
+                self.main_file.path,
+                {Tags.ORIENTATION: combined},
+                use_sidecar=use_sidecar,
+            )
 
     def _set_embedded_media(self, obj):
         return obj.main_file.embedded_media

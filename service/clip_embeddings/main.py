@@ -1,5 +1,5 @@
 import time
-
+import os
 import gevent
 from flask import Flask, request
 from gevent.pywsgi import WSGIServer
@@ -14,6 +14,24 @@ def log(message):
 
 semantic_search_instance = None
 last_request_time = None
+
+# Unload model after idle timeout to free memory
+IDLE_TIMEOUT_SECONDS = int(os.getenv("CLIP_IDLE_TIMEOUT_SECONDS", "45"))
+
+
+def _idle_unloader():
+    """Background greenlet that unloads the model after idle timeout."""
+    global semantic_search_instance, last_request_time
+    while True:
+        gevent.sleep(30)  # check every 30 seconds
+        if (
+            semantic_search_instance is not None
+            and semantic_search_instance.model_is_loaded
+            and last_request_time is not None
+            and time.time() - last_request_time > IDLE_TIMEOUT_SECONDS
+        ):
+            log("idle timeout reached, unloading model to free memory")
+            semantic_search_instance.unload()
 
 
 @app.route("/clip-embeddings", methods=["POST"])
@@ -75,4 +93,5 @@ if __name__ == "__main__":
     log("service starting")
     server = WSGIServer(("0.0.0.0", 8006), app)
     server_thread = gevent.spawn(server.serve_forever)
-    gevent.joinall([server_thread])
+    idle_thread = gevent.spawn(_idle_unloader)
+    gevent.joinall([server_thread, idle_thread])

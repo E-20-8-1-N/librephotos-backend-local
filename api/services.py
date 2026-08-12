@@ -31,10 +31,10 @@ SERVICES = {
     "thumbnail": 8003,
     "face_recognition": 8005,
     "clip_embeddings": 8006,
-    "llm": 8008,
-    "image_captioning": 8007,
+    # "llm": 8008,
+    # "image_captioning": 8007,
     "exif": 8010,
-    "tags": 8011,
+    # "tags": 8011,
 }
 
 HTTP_OK = 200

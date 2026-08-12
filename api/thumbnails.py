@@ -13,47 +13,111 @@ from api.models.file import is_raw
 # --- Configuration (from Environment Variables) ---
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
-def create_thumbnail(input_path, output_height, output_path, hash, file_type):
+def _apply_local_orientation(image: Image.Image, local_orientation: int) -> Image.Image:
+    """Apply a user-specified orientation transform to an already-upright Pillow image.
+
+    ``local_orientation`` follows the EXIF Orientation convention (1-8).
+    Orientation 1 is the identity (no change).  The image passed in is assumed
+    to be already auto-rotated by Pillow (i.e. it is visually upright), so
+    this function applies *additional* rotation/flip on top.
+
+    EXIF orientation semantics (applied to a visually-upright image):
+        1 – no change
+        2 – flip horizontal
+        3 – rotate 180°
+        4 – flip vertical
+        5 – rotate 90° CCW then flip horizontal
+        6 – rotate 90° CW
+        7 – rotate 90° CW then flip horizontal
+        8 – rotate 90° CCW (= 270° CW)
+    """
+    if local_orientation == 1 or local_orientation is None:
+        return image
+    if local_orientation == 2:
+        return ImageOps.mirror(image)
+    if local_orientation == 3:
+        return image.rotate(180, expand=True)
+    if local_orientation == 4:
+        return ImageOps.flip(image)
+    if local_orientation == 5:
+        # 90° CCW + flip H
+        return ImageOps.mirror(image.rotate(90, expand=True))
+    if local_orientation == 6:
+        # pyvips.rot270() rotates 270° counter-clockwise, which is the same
+        # as 90° clockwise — matching EXIF orientation 6 (display: 90° CW).
+        return image.rotate(-90, expand=True) # or 270
+    if local_orientation == 7:
+        # 90° CW + flip H
+        return ImageOps.mirror(image.rotate(-90, expand=True))
+    if local_orientation == 8:
+        # pyvips.rot90() rotates 90° counter-clockwise — matching EXIF
+        # orientation 8 (display: 270° CW = 90° CCW).
+        return image.rotate(90, expand=True)
+    return image
+
+
+def create_thumbnail(
+    input_path, output_height, output_path, hash, file_type, local_orientation=1
+):
     complete_path = os.path.join(
         settings.MEDIA_ROOT, output_path, hash + file_type
-    ).strip()
+    )
     
     source_path = input_path
 
-    # Handle RAW files
-    if is_raw(input_path):
-        if "thumbnails_big" in output_path:
-            json = {
-                "source": input_path,
-                "destination": complete_path,
-                "height": output_height,
-            }
-            try:
-                response = requests.post(f"http://{BACKEND_HOST}:8003/", json=json).json()
-                return response["thumbnail"]
-            except Exception as e:
-                util.logger.error(f"Backend RAW processing failed for {input_path}: {e}")
-                raise e
-        else:
-            source_path = os.path.join(
-                settings.MEDIA_ROOT, "thumbnails_big", hash + file_type
-            )
-    # Process image using Pillow (for JPEGs, HEICs, PNGs, and pre-converted RAWs)
     try:
+        # ====================== RAW File Handling ======================
+        if is_raw(input_path):
+            if "thumbnails_big" in output_path:
+                json = {
+                    "source": input_path,
+                    "destination": complete_path,
+                    "height": output_height,
+                }
+                response = requests.post(f"http://{BACKEND_HOST}:8003/",json=json).json()
+                # The RAW service already applies auto-orientation.
+                # Apply any additional user-specified local orientation on top.
+                if local_orientation and local_orientation != 1:
+                    with Image.open(complete_path) as img:
+                        img = img.copy()  # Ensure we don't modify in-place unexpectedly
+                        img = ImageOps.exif_transpose(img)  # Safety
+                        img = _apply_local_orientation(img, local_orientation)
+                        img = img.convert("RGB")
+                        img.save(complete_path, quality=95, optimize=True)
+                return response["thumbnail"]
+            else:
+                # Smaller thumbnails: derive from the already-created big thumbnail
+                big_thumbnail_path = os.path.join(
+                    settings.MEDIA_ROOT, "thumbnails_big", hash + file_type
+                )
+                source_path = big_thumbnail_path
+        else:
+            source_path = input_path
+        # ====================== Pillow Processing ======================
         with Image.open(source_path) as img:
-            # Apply EXIF rotation (pyvips did this auto; Pillow needs explicit call)
+            # Memory optimization: ask the JPEG decoder to return a pre-scaled
+            # image so we never allocate the full-resolution pixel buffer for
+            # a tiny thumbnail. No-op for formats that don't support draft().
+            try:
+                img.draft("RGB", (output_height * 4, output_height * 4))
+            except Exception:
+                pass
+            # Apply EXIF-based auto-rotation (what pyvips did automatically)
             img = ImageOps.exif_transpose(img)
-            
-            if img.mode in ("RGBA", "P"):
+            # Convert to RGB if necessary (required for JPEG/WebP)
+            if img.mode in ("RGBA", "P", "LA", "RGBA"):
                 img = img.convert("RGB")
-                
-            # Pillow's thumbnail method modifies the image in-place and preserves aspect ratio
+            # Resize while preserving aspect ratio (equivalent to pyvips thumbnail)
             img.thumbnail((10000, output_height), Image.Resampling.LANCZOS)
-            img.save(complete_path, quality=95)
-            return complete_path
+            # Apply additional user-specified orientation if needed
+            if local_orientation and local_orientation != 1:
+                img = _apply_local_orientation(img, local_orientation)
+            # Save with high quality
+            img.save(complete_path, quality=95, optimize=True)
+        return complete_path
     except Exception as e:
-        util.logger.error(f"Could not create thumbnail for file {input_path} using PIL: {e}")
-        raise e
+        util.logger.error(f"Could not create thumbnail for file {input_path}: {e}")
+        raise
 
 
 def create_animated_thumbnail(input_path, output_height, output_path, hash, file_type):

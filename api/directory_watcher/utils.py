@@ -11,6 +11,18 @@ from django.utils import timezone
 
 from api.models import LongRunningJob
 
+# How often (in loop iterations) to check the DB for job cancellation.
+# Lower values are more responsive but increase DB load.
+CANCELLATION_CHECK_INTERVAL = 100
+
+
+ALLOWED_HIDDEN_SCAN_DIRECTORIES = [".cetapod_share"]
+DEFAULT_SCAN_SKIP_EXTENSIONS = ".pdf,.mkv,.avi,.wmv,.flv"
+
+
+def _is_allowed_hidden_path(path):
+    return os.path.basename(os.path.abspath(path)) in ALLOWED_HIDDEN_SCAN_DIRECTORIES
+
 
 ALLOWED_HIDDEN_SCAN_DIRECTORIES = [".cetapod_share"]
 DEFAULT_SCAN_SKIP_EXTENSIONS = ".pdf,.mkv,.avi,.wmv,.flv"
@@ -102,6 +114,23 @@ def walk_files(scan_files, callback):
             callback.append(fpath)
 
 
+def is_job_cancelled(job_id) -> bool:
+    """
+    Check if a long-running job has been cancelled.
+
+    Use this in processing loops to cooperatively stop work when the user
+    cancels a job. Typically called every N iterations to avoid excessive
+    DB queries.
+
+    Args:
+        job_id: The job ID to check
+
+    Returns:
+        True if the job has been cancelled, False otherwise
+    """
+    return LongRunningJob.objects.filter(job_id=job_id, cancelled=True).exists()
+
+
 def update_scan_counter(job_id, failed=False, error=None):
     """
     Update the progress counter for a long-running job.
@@ -122,6 +151,10 @@ def update_scan_counter(job_id, failed=False, error=None):
     # Refetch the job to get the updated progress_current value
     job = LongRunningJob.objects.filter(job_id=job_id).first()
     if not job:
+        return
+
+    # If job has been cancelled, stop processing
+    if job.cancelled:
         return
 
     # Mark the job as finished if the current progress equals the target

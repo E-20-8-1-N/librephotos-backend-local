@@ -5,8 +5,6 @@ import api.models
 from api import util
 import requests
 
-import gc
-import torch
 import time
 
 # --- Configuration (from Environment Variables) ---
@@ -103,7 +101,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                 "caption-generator is unavailable; cannot generate caption for %s",
                 image_path,
             )
-            return None
+            return None, None
         
         payload = { 
             "file_path": image_path, 
@@ -128,11 +126,39 @@ def generate_image_caption(image_path: str, file_ext: str):
 
                 if response.status_code == 200:
                     result = response.json()
-                    caption = result.get("caption", "").strip()
-                    if caption:
-                        util.logger.info(f"Generated caption for {image_path}: '{caption}'")
-                        return caption
-                    util.logger.error("Caption API returned empty caption for %s", image_path)
+                    caption_raw = (result.get("caption") or "").strip()
+
+                    # Parse embedded objects/texts from caption string
+                    caption = caption_raw
+                    objects = ""
+                    texts = ""
+                    if "\nobjects:" in caption_raw:
+                        parts = caption_raw.split("\nobjects:", 1)
+                        caption = parts[0].strip()
+                        remainder = parts[1]
+                        if "\ntexts:" in remainder:
+                            obj_part, txt_part = remainder.split("\ntexts:", 1)
+                            objects = obj_part.strip()
+                            texts = txt_part.strip()
+                        else:
+                            objects = remainder.strip()
+                    elif "\ntexts:" in caption_raw:
+                        parts = caption_raw.split("\ntexts:", 1)
+                        caption = parts[0].strip()
+                        texts = parts[1].strip()
+
+                    # Fall back to separate API fields
+                    if not objects:
+                        objects = (result.get("objects") or "").strip()
+                    if not texts:
+                        texts = (result.get("texts") or "").strip()
+
+                    tag_parts = [p for p in (objects, texts) if p]
+                    tag = ", ".join(tag_parts) if tag_parts else None
+                    if caption or tag:
+                        util.logger.info(f"Generated caption for {image_path}: '{caption}', tag: {tag}")
+                        return caption, tag
+                    util.logger.error("Caption API returned empty response for %s", image_path)
                 elif response.status_code == 504:
                     util.logger.warning(f"Server returned {response.status_code} (Processing) for {image_path}. Triggering retry...")
                     raise requests.exceptions.Timeout(f"Server returned {response.status_code} Gateway Timeout")
@@ -162,10 +188,13 @@ def generate_image_caption(image_path: str, file_ext: str):
         util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
         pass
     finally:
+        import gc
+        import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
-    return None
+    return None, None
 
 class PhotoSearch(models.Model):
     """Model for handling photo search functionality"""
@@ -226,6 +255,10 @@ class PhotoSearch(models.Model):
             if user_caption:
                 search_captions += user_caption + " "
 
+            im2txt_tag = captions_json.get("im2txt_tag", "")
+            if im2txt_tag:
+                search_captions += im2txt_tag + " "
+            
             im2txt_caption = captions_json.get("im2txt", "")
             if im2txt_caption:
                 search_captions += im2txt_caption + " "
@@ -233,14 +266,18 @@ class PhotoSearch(models.Model):
                 if self.photo.thumbnail and self.photo.thumbnail.thumbnail_big:
                     image_path = self.photo.thumbnail.thumbnail_big.path
                     file_ext = str('.' + image_path.lower().split('.')[-1])
-                    caption = generate_image_caption(image_path, file_ext)
+                    caption, tag = generate_image_caption(image_path, file_ext)
 
                     caption_data = self.photo.caption_instance.captions_json or {}
-                    caption_data["im2txt"] = caption
-                    self.photo.caption_instance.captions_json = caption_data
-                    self.photo.caption_instance.save()
-
-                    search_captions += caption + " "
+                    if caption:
+                        caption_data["im2txt"] = caption
+                        search_captions += caption + " "
+                    if tag:
+                        caption_data["im2txt_tag"] = tag
+                        search_captions += tag + " "
+                    if caption or tag is not None:
+                        self.photo.caption_instance.captions_json = caption_data
+                        self.photo.caption_instance.save()
 
         # Add face/person names
         for face in api.models.face.Face.objects.filter(photo=self.photo).all():
@@ -264,6 +301,8 @@ class PhotoSearch(models.Model):
                 search_captions += metadata.camera_display + " "
             if metadata.lens_display:
                 search_captions += metadata.lens_display + " "
+            if metadata.keywords:
+                search_captions += " ".join(metadata.keywords) + " "
         except Exception:
             # PhotoMetadata may not exist yet
             pass
@@ -277,7 +316,13 @@ class PhotoSearch(models.Model):
     def update_search_location(self, geolocation_json):
         """Update search location from geolocation data"""
         if geolocation_json and "address" in geolocation_json:
-            self.search_location = geolocation_json["address"]
+            location = geolocation_json["address"]
+            # Append places not already present in the address
+            places = geolocation_json.get("places", [])
+            new_places = [p for p in places if p not in location]
+            if new_places:
+                location += ", " + ", ".join(new_places)
+            self.search_location = location
         elif geolocation_json and "features" in geolocation_json:
             # Handle features format used in tests
             features = geolocation_json["features"]

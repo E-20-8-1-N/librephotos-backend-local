@@ -490,7 +490,7 @@ class PhotoMetadata(models.Model):
             Tags.KEYS_DESCRIPTION,
             Tags.DESCRIPTION,
             Tags.SUBJECT,
-            Tags.KEYWORDS_IPTC,
+            Tags.IPTC_KEYWORDS,
             Tags.CREATOR,
             Tags.COPYRIGHT,
             Tags.ORIENTATION,
@@ -541,8 +541,10 @@ class PhotoMetadata(models.Model):
             caption = cls._normalize_text(caption_value)
         else:
             caption = cls._normalize_text(tag_values.get(Tags.DESCRIPTION))
+        xmp_subject = tag_values.get(Tags.SUBJECT)
+        iptc_keywords = tag_values.get(Tags.IPTC_KEYWORDS)
         keywords = cls._normalize_keywords(
-            tag_values.get(Tags.SUBJECT) or tag_values.get(Tags.KEYWORDS_IPTC)
+            xmp_subject or iptc_keywords
         )
         creator = cls._normalize_text(tag_values.get(Tags.CREATOR), join_list=True)
         copyright_value = cls._normalize_text(tag_values.get(Tags.COPYRIGHT))
@@ -710,6 +712,23 @@ class PhotoMetadata(models.Model):
             metadata_update_fields,
             overwrite,
         )
+
+        # Merge keywords from XMP:Subject and IPTC:Keywords (deduplicated)
+        merged_keywords = set()
+        if xmp_subject:
+            if isinstance(xmp_subject, list):
+                merged_keywords.update(xmp_subject)
+            elif isinstance(xmp_subject, str):
+                merged_keywords.add(xmp_subject)
+        if iptc_keywords:
+            if isinstance(iptc_keywords, list):
+                merged_keywords.update(iptc_keywords)
+            elif isinstance(iptc_keywords, str):
+                merged_keywords.add(iptc_keywords)
+        if merged_keywords:
+            metadata.keywords = sorted(merged_keywords)
+        if commit:
+            metadata.save()
 
         if isinstance(shutter_speed, numbers.Number):
             cls._set_if_present(

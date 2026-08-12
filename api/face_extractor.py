@@ -9,11 +9,6 @@ from api.metadata.tags import Tags
 from api.util import is_number, logger
 
 
-class RuleTypes:
-    EXIF = "exif"
-    DLIB = "dlib"
-
-
 def extract_from_exif(image_path, big_thumbnail_image_path):
     (region_info, orientation) = get_metadata(
         image_path,
@@ -97,15 +92,13 @@ def extract_from_exif(image_path, big_thumbnail_image_path):
     return face_locations
 
 
-def extract_from_dlib(image_path, big_thumbnail_path, owner):
+def extract_from_face_service(image_path, big_thumbnail_path):
     try:
-        face_locations = get_face_locations(
-            big_thumbnail_path,
-            model=owner.face_recognition_model.lower(),
+        face_locations = get_face_locations(big_thumbnail_path)
+    except Exception:
+        logger.error(
+            f"Can't extract face information on photo: {image_path}", exc_info=True
         )
-    except Exception as e:
-        logger.info(f"Can't extract face information on photo: {image_path}")
-        logger.info(e)
         face_locations = []
 
     for i, face_location in enumerate(face_locations):
@@ -116,5 +109,5 @@ def extract_from_dlib(image_path, big_thumbnail_path, owner):
 def extract(image_path, big_thumbnail_path, owner):
     exif = extract_from_exif(image_path, big_thumbnail_path)
     if not exif:
-        return extract_from_dlib(image_path, big_thumbnail_path, owner)
+        return extract_from_face_service(image_path, big_thumbnail_path)
     return exif

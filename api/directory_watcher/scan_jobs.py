@@ -9,6 +9,7 @@ import datetime
 import os
 import uuid
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytz
@@ -37,6 +38,7 @@ from api.directory_watcher.repair_jobs import repair_ungrouped_file_variants
 from api.directory_watcher.utils import (
     walk_directory,
     walk_files,
+    is_job_cancelled,
     update_scan_counter,
 )
 
@@ -148,6 +150,99 @@ def wait_for_group_and_process_metadata(
             )
 
 
+def wait_for_group_and_queue_post_processing(
+    group_id: str,
+    user_id: int,
+    full_scan: bool,
+    force_im2txt: bool,
+    queue_scan_missing: bool,
+    expected_count: int,
+    *,
+    attempt: int = 1,
+    max_attempts: int = 2000,
+    **kwargs,
+):
+    """
+    Sentinel task: waits until the image-processing group for a user's scan is
+    complete, then enqueues the heavy post-processing jobs (tags, geolocation,
+    im2txt captions, clip embeddings, face scan, missing-photo scan, repair).
+
+    Deferring these heavy jobs means that when a second user triggers a scan,
+    their thumbnail (image-group) tasks land in the queue immediately after the
+    first user's thumbnail tasks — *before* the first user's heavy jobs are
+    enqueued — so thumbnails for the second user show up without waiting for
+    the first user's tagging/captioning/geolocation work to drain.
+
+    The sentinel re-enqueues itself with a small delay until the group is
+    complete or `max_attempts` is exhausted.
+    """
+    from django_q.tasks import count_group
+    from django.contrib.auth import get_user_model
+
+    try:
+        completed = count_group(group_id)
+    except Exception as e:
+        util.logger.warning(
+            f"post-processing sentinel: could not read group status for {group_id}: {e}. Treating as incomplete."
+        )
+        completed = 0
+
+    completed_int = int(completed or 0)
+
+    if completed_int < expected_count and attempt < max_attempts:
+        util.logger.info(
+            f"post-processing sentinel: group {group_id} {completed_int}/{expected_count} complete; "
+            f"rescheduling (attempt {attempt + 1}/{max_attempts})"
+        )
+        AsyncTask(
+            wait_for_group_and_queue_post_processing,
+            group_id,
+            user_id,
+            full_scan,
+            force_im2txt,
+            queue_scan_missing,
+            expected_count,
+            attempt=attempt + 1,
+            max_attempts=max_attempts,
+            schedule=datetime.timedelta(seconds=5),
+        ).run()
+        return
+
+    if completed_int < expected_count:
+        util.logger.warning(
+            f"post-processing sentinel: proceeding despite incomplete image group {group_id}: "
+            f"{completed_int}/{expected_count} after {attempt} attempts"
+        )
+    else:
+        util.logger.info(
+            f"post-processing sentinel: image group {group_id} complete; "
+            f"enqueuing heavy post-processing jobs"
+        )
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        util.logger.warning(
+            f"post-processing sentinel: user {user_id} not found; skipping post-processing"
+        )
+        return
+
+    if queue_scan_missing:
+        AsyncTask(scan_missing_photos, user, uuid.uuid4()).run()
+
+    AsyncTask(repair_ungrouped_file_variants, user, uuid.uuid4()).run()
+    AsyncTask(generate_tags, user, uuid.uuid4(), full_scan).run()
+    if force_im2txt:
+        AsyncTask(generate_im2txt_captions, user, uuid.uuid4(), full_scan).run()
+    AsyncTask(add_geolocation, user, uuid.uuid4(), full_scan).run()
+
+    chain = Chain()
+    chain.append(batch_calculate_clip_embedding, user)
+    chain.append(scan_faces, user, uuid.uuid4(), full_scan)
+    chain.run()
+
+
 def photo_scanner(user, last_scan, full_scan, path, job_id):
     """
     Check if a single file needs processing and queue it.
@@ -176,8 +271,10 @@ def scan_photos(
     full_scan,
     job_id,
     scan_directory="",
-    scan_files=[],
+    scan_files=None,
     force_im2txt=False,
+    inline_image_processing=False,
+    inline_workers=4,
 ):
     """
     Two-phase scan to avoid race conditions with RAW+JPEG grouping.
@@ -198,7 +295,18 @@ def scan_photos(
         job_id: Job ID for tracking progress
         scan_directory: Directory to scan (defaults to user's scan_directory)
         scan_files: Optional list of specific files to scan
+        inline_image_processing: If True, process image groups (thumbnail,
+            EXIF, perceptual hash, etc.) directly in this thread via a local
+            ThreadPoolExecutor instead of enqueuing ``handle_file_group`` to
+            django-q. This lets a user's thumbnails appear immediately even
+            when the shared django-q queue is backed up with heavy per-photo
+            ML tasks from another user's scan (generate_tag_job,
+            generate_im2txt_job, etc.).
+        inline_workers: Number of threads to use when ``inline_image_processing``
+            is True.
     """
+    if scan_files is None:
+        scan_files = []
     thumbnail_dirs = [
         os.path.join(settings.MEDIA_ROOT, "square_thumbnails_small"),
         os.path.join(settings.MEDIA_ROOT, "square_thumbnails"),
@@ -288,14 +396,40 @@ def scan_photos(
         # Each group creates one Photo with all file variants
         image_group_id = str(uuid.uuid4())
 
-        for group_key, paths in groups_to_process:
-            AsyncTask(
-                handle_file_group,
-                user,
-                paths,
-                job_id,
-                group=image_group_id,
-            ).run()
+        if inline_image_processing:
+            # Process image groups directly in this thread (using a small
+            # ThreadPoolExecutor for throughput). This bypasses the shared
+            # django-q queue entirely, so a user's thumbnails are not stuck
+            # behind another user's in-flight generate_tag_job /
+            # generate_im2txt_job / add_geolocation per-photo tasks.
+            util.logger.info(
+                f"Processing {len(groups_to_process)} image groups inline "
+                f"with {inline_workers} worker thread(s)"
+            )
+            if groups_to_process:
+                with ThreadPoolExecutor(max_workers=max(1, inline_workers)) as pool:
+                    futures = [
+                        pool.submit(handle_file_group, user, paths, job_id)
+                        for _, paths in groups_to_process
+                    ]
+                    for future in futures:
+                        try:
+                            future.result()
+                        except Exception:
+                            util.logger.exception(
+                                "Inline image-group processing failed"
+                            )
+            # Ensure any connections opened by worker threads are cleaned up
+            db.connections.close_all()
+        else:
+            for group_key, paths in groups_to_process:
+                AsyncTask(
+                    handle_file_group,
+                    user,
+                    paths,
+                    job_id,
+                    group=image_group_id,
+                ).run()
 
         # If there are only metadata files (no image groups queued), process metadata now
         if not groups_to_process and metadata_paths:
@@ -307,20 +441,33 @@ def scan_photos(
 
         # If there are images and metadata, enqueue a sentinel task that waits for the image group
         if groups_to_process and metadata_paths:
-            util.logger.info(
-                f"Scheduling sentinel to process {len(metadata_paths)} metadata files after {len(groups_to_process)} image groups"
-            )
-            AsyncTask(
-                wait_for_group_and_process_metadata,
-                image_group_id,
-                metadata_paths,
-                user.id,
-                full_scan,
-                job_id,
-                len(groups_to_process),
-                attempt=1,
-                max_attempts=2,
-            ).run()
+            if inline_image_processing:
+                # Images were already processed inline above — handle metadata right now.
+                util.logger.info(
+                    f"Processing {len(metadata_paths)} metadata files inline after image groups"
+                )
+                for path in metadata_paths:
+                    try:
+                        photo_scanner(user, last_scan, full_scan, path, job_id)
+                    except Exception:
+                        util.logger.exception(
+                            f"Failed processing metadata {path} for job {job_id}"
+                        )
+            else:
+                util.logger.info(
+                    f"Scheduling sentinel to process {len(metadata_paths)} metadata files after {len(groups_to_process)} image groups"
+                )
+                AsyncTask(
+                    wait_for_group_and_process_metadata,
+                    image_group_id,
+                    metadata_paths,
+                    user.id,
+                    full_scan,
+                    job_id,
+                    len(groups_to_process),
+                    attempt=1,
+                    max_attempts=2,
+                ).run()
 
         util.logger.info(f"Scanned {files_found} files in : {scan_directory}")
 
@@ -355,23 +502,48 @@ def scan_photos(
 
         # if the scan type is not the default user scan directory, or if it is specified as only scanning
         # specific files, there is no need to rescan fully for missing photos.
-        if full_scan or (scan_directory == user.scan_directory and not scan_files):
-            AsyncTask(scan_missing_photos, user, uuid.uuid4()).run()
+        queue_scan_missing = bool(
+            full_scan or (scan_directory == user.scan_directory and not scan_files)
+        )
 
-        # Run repair job to fix any previously ungrouped file variants
-        # This handles race conditions from previous scans and incremental adds
-        AsyncTask(repair_ungrouped_file_variants, user, uuid.uuid4()).run()
+        # Defer heavy post-processing (tags, im2txt, geolocation, clip+faces,
+        # scan-missing, repair) until this scan's image group has finished.
+        #
+        # This prevents a second user's newly-queued thumbnail tasks from being
+        # stuck behind the first user's long-running tagging / captioning /
+        # geolocation tasks in the shared django-q FIFO queue. While the
+        # sentinel is polling, the second user's `handle_file_group` tasks land
+        # right behind the first user's image tasks — so their thumbnails show
+        # up quickly, and heavy jobs run only after the image work is done.
+        if groups_to_process and not inline_image_processing:
+            util.logger.info(
+                f"Scheduling post-processing sentinel for {len(groups_to_process)} image groups"
+            )
+            AsyncTask(
+                wait_for_group_and_queue_post_processing,
+                image_group_id,
+                user.id,
+                full_scan,
+                bool(force_im2txt),
+                queue_scan_missing,
+                len(groups_to_process),
+                attempt=1,
+            ).run()
+        else:
+            # Either no image tasks were queued, or image groups were already
+            # processed inline — enqueue heavy post-processing right away.
+            if queue_scan_missing:
+                AsyncTask(scan_missing_photos, user, uuid.uuid4()).run()
+            AsyncTask(repair_ungrouped_file_variants, user, uuid.uuid4()).run()
+            AsyncTask(generate_tags, user, uuid.uuid4(), full_scan).run()
+            if force_im2txt:
+                AsyncTask(generate_im2txt_captions, user, uuid.uuid4(), full_scan).run()
+            AsyncTask(add_geolocation, user, uuid.uuid4(), full_scan).run()
 
-        AsyncTask(generate_tags, user, uuid.uuid4(), full_scan).run()
-        if force_im2txt:
-            AsyncTask(generate_im2txt_captions, user, uuid.uuid4(), full_scan).run()
-        AsyncTask(add_geolocation, user, uuid.uuid4(), full_scan).run()
-
-        # The scan faces job will have issues if the embeddings haven't been generated before it runs
-        chain = Chain()
-        chain.append(batch_calculate_clip_embedding, user)
-        chain.append(scan_faces, user, uuid.uuid4(), full_scan)
-        chain.run()
+            chain = Chain()
+            chain.append(batch_calculate_clip_embedding, user)
+            chain.append(scan_faces, user, uuid.uuid4(), full_scan)
+            chain.run()
 
     except Exception as e:
         util.logger.exception("An error occurred: ")
@@ -404,6 +576,12 @@ def scan_missing_photos(user, job_id: UUID):
         deleted_count = 0
 
         for page in range(1, paginator.num_pages + 1):
+            # Check for cancellation
+            if is_job_cancelled(job_id):
+                util.logger.info("Scan missing photos job cancelled")
+                return
+            for existing_photo in paginator.page(page).object_list:
+                existing_photo._check_files()
             page_photos = paginator.page(page).object_list
             for existing_photo in page_photos:
                 # Existing logic (kept) – may update internal state, sidecar checks, etc.

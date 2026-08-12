@@ -1,10 +1,9 @@
 import datetime
+import gc
 import uuid
 
 import numpy as np
-import seaborn as sns
 from bulk_update.helper import bulk_update
-from django.core.paginator import Paginator
 from django.db.models import Q
 from django_q.tasks import AsyncTask
 from hdbscan import HDBSCAN
@@ -12,6 +11,7 @@ from sklearn.decomposition import PCA
 from sklearn.neural_network import MLPClassifier
 
 from api.cluster_manager import ClusterManager
+from api.color_palettes import hex_palette
 from api.models import Face, LongRunningJob, Person
 from api.models.cluster import UNKNOWN_CLUSTER_ID, Cluster, get_unknown_cluster
 from api.models.user import User, get_deleted_user
@@ -33,19 +33,17 @@ def cluster_faces(user, inferred=True):
     persons = [p.id for p in Person.objects.filter(faces__photo__owner=user).distinct()]
 
     # Create a color mapping for each person
-    p2c = dict(zip(persons, sns.color_palette(n_colors=len(persons)).as_hex()))
+    p2c = dict(zip(persons, hex_palette(n_colors=len(persons))))
 
     face_encoding = []
     faces_with_encoding = []
     # Fetch faces that belong to the user and are not deleted
     faces = Face.objects.filter(Q(photo__owner=user) & Q(deleted=False))
-    paginator = Paginator(faces, 5000)
 
-    for page in range(1, paginator.num_pages + 1):
-        for face in paginator.page(page).object_list:
-            if ((not face.person) or inferred) and face.encoding:
-                face_encoding.append(face.get_encoding_array())
-                faces_with_encoding.append(face)
+    for face in faces.iterator():
+        if ((not face.person_id) or inferred) and face.encoding:
+            face_encoding.append(face.get_encoding_array())
+            faces_with_encoding.append(face)
 
     # Return empty result if no faces with encodings
     if len(face_encoding) == 0:
@@ -126,8 +124,25 @@ def create_all_clusters(user: User, lrj: LongRunningJob = None) -> int:
     data = {
         "all": {"encoding": [], "id": [], "person_id": [], "person_labeled": []},
     }
-    for face in Face.objects.filter(photo__owner=user).prefetch_related("person"):
-        data["all"]["encoding"].append(face.get_encoding_array())
+    encoding_length: int | None = None
+    for face in Face.objects.filter(
+        photo__owner=user, encoding__isnull=False
+    ).prefetch_related("person").iterator(chunk_size=2000):
+        if not face.encoding:
+            continue
+        enc = face.get_encoding_array()
+        if encoding_length is None:
+            encoding_length = len(enc)
+        elif len(enc) != encoding_length:
+            logger.warning(
+                "Skipping face %d: encoding length %d does not match expected %d "
+                "(face recognition model may have changed)",
+                face.id,
+                len(enc),
+                encoding_length,
+            )
+            continue
+        data["all"]["encoding"].append(enc)
         data["all"]["id"].append(face.id)
 
     target_count = len(data["all"]["id"])
@@ -162,8 +177,13 @@ def create_all_clusters(user: User, lrj: LongRunningJob = None) -> int:
         metric="euclidean",
     )
     logger.info("Before finding clusters")
-    # clustering the encodings
-    clt.fit(np.array(data["all"]["encoding"]))
+    # clustering the encodings — convert to numpy and free the Python list
+    encodings_np = np.array(data["all"]["encoding"])
+    data["all"]["encoding"] = None
+    gc.collect()
+    clt.fit(encodings_np)
+    del encodings_np
+    gc.collect()
     logger.info("After finding clusters")
 
     labelIDs = np.unique(clt.labels_)
@@ -278,8 +298,11 @@ def train_faces(user: User, job_id) -> bool:
         # First, sort all faces into known and unknown ones
         face: Face
         for face in Face.objects.filter(
-            Q(photo__owner=user) & Q(encoding__isnull=False) & Q(deleted=False)
-        ).prefetch_related("person"):
+            Q(photo__owner=user)
+            & Q(encoding__isnull=False)
+            & ~Q(encoding="")
+            & Q(deleted=False)
+        ).prefetch_related("person").iterator(chunk_size=2000):
             if not face.person:
                 data_unknown["encoding"].append(face.get_encoding_array())
                 data_unknown["id"].append(face.id)
@@ -295,6 +318,11 @@ def train_faces(user: User, job_id) -> bool:
                 solver="adam", alpha=1e-5, random_state=1, max_iter=1000
             ).fit(np.array(data_known["encoding"]), np.array(data_known["id"]))
             logger.info("After fitting")
+
+        # Free unknown encoding list early — we'll rebuild it as numpy below
+        data_unknown_encoding_np = np.array(data_unknown["encoding"]) if data_unknown["encoding"] else None
+        data_unknown["encoding"] = None
+        gc.collect()
 
         # Next, pretend all unknown face clusters are known and add their mean encoding. This allows us
         # to predict the likelihood of other unknown faces belonging to those simulated clusters. For
@@ -320,6 +348,15 @@ def train_faces(user: User, job_id) -> bool:
 
         # Collect the probabilities for each unknown face. The probabilities returned
         # are arrays in the same order as the people IDs in the original training set
+        if data_unknown_encoding_np is not None and len(data_unknown_encoding_np) > 0:
+            filtered_unknown_encodings, filtered_unknown_ids = filter_data(
+                list(data_unknown_encoding_np), data_unknown["id"]
+            )
+            del data_unknown_encoding_np
+            gc.collect()
+            data_unknown["encoding"] = list(filtered_unknown_encodings)
+            data_unknown["id"] = [int(face_id) for face_id in filtered_unknown_ids]
+
         target_count = len(data_unknown["id"])
         if target_count == 0:
             logger.info("No clusters found")

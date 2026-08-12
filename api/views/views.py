@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 import uuid
 from urllib.parse import quote
 
@@ -167,6 +168,43 @@ def get_user_from_path(raw_path, user_home_directory_prefix):
 
     return user, abs_path, None
 
+
+def _run_backend_user_scan(user, job_id, scan_directory):
+    """
+    Run the scan orchestrator for a user directly in a background thread so
+    the file-discovery / thumbnail-queueing phase starts immediately and is
+    not blocked behind other users' heavy jobs (generate_tags,
+    generate_im2txt_captions, add_geolocation, etc.) in the shared
+    django-q FIFO queue.
+
+    Heavy per-file work is still dispatched to django-q workers from inside
+    scan_photos(), but queuing happens in parallel for each caller, so
+    thumbnails for newly added files appear without waiting for any in-flight
+    heavy job to finish.
+    """
+    from django import db
+
+    try:
+        if not do_all_models_exist():
+            try:
+                download_models(user)
+            except Exception:
+                logger.exception(
+                    "download_models failed for user %s; aborting backend scan",
+                    getattr(user, "username", user.pk),
+                )
+                return
+
+        scan_photos(user, False, job_id, scan_directory, None, True, True)
+    except Exception:
+        logger.exception(
+            "backend scan thread failed for user %s",
+            getattr(user, "username", user.pk),
+        )
+    finally:
+        db.connections.close_all()
+
+
 class BackendScanPhotosView(APIView):
     """
     No-auth endpoint. Accepts {"path": "/data/pool/home/user01/img01.jpg"}.
@@ -206,13 +244,19 @@ class BackendScanPhotosView(APIView):
             return error_response
 
         try:
-            chain = Chain()
-            if not do_all_models_exist():
-                chain.append(download_models, user)
-
             job_id = uuid.uuid4()
-            chain.append(scan_photos, user, False, job_id, user.scan_directory)
-            chain.run()
+
+            # Run orchestration in a daemon thread so this request returns
+            # immediately and the scan does not have to wait for a django-q
+            # worker slot behind long-running heavy jobs. scan_photos() will
+            # enqueue per-file (thumbnail) tasks as soon as it starts running,
+            # so thumbnails for newly added files show up quickly.
+            threading.Thread(
+                target=_run_backend_user_scan,
+                args=(user, job_id, user.scan_directory),
+                name=f"backend-scan-{user.pk}-{job_id}",
+                daemon=True,
+            ).start()
 
             return Response(
                 {
@@ -304,6 +348,7 @@ class SiteSettingsView(APIView):
         out["captioning_model"] = site_config.CAPTIONING_MODEL
         out["llm_model"] = site_config.LLM_MODEL
         out["tagging_model"] = site_config.TAGGING_MODEL
+        out["face_recognition_model"] = site_config.FACE_RECOGNITION_MODEL
         return Response(out)
 
     def post(self, request, format=None):
@@ -326,6 +371,8 @@ class SiteSettingsView(APIView):
             site_config.LLM_MODEL = request.data["llm_model"]
         if "tagging_model" in request.data.keys():
             site_config.TAGGING_MODEL = request.data["tagging_model"]
+        if "face_recognition_model" in request.data.keys():
+            site_config.FACE_RECOGNITION_MODEL = request.data["face_recognition_model"]
         if not do_all_models_exist():
             AsyncTask(download_models, User.objects.get(id=request.user.id)).run()
 
@@ -638,15 +685,7 @@ class ScanUploadedPhotosView(APIView):
             chain.append(download_models, request.user)
         try:
             job_id = uuid.uuid4()
-            chain.append(
-                scan_photos,
-                request.user,
-                True,
-                job_id,
-                request.user.scan_directory,
-                [],
-                True,
-            )
+            chain.append(scan_photos, request.user, False, job_id, request.user.scan_directory)
             chain.run()
             return Response({"status": True, "job_id": job_id})
         except BaseException:
@@ -720,7 +759,6 @@ class MediaAccessView(APIView):
 
         # grant access if the user is owner of the requested photo,
         # the photo is shared with the user, or the photo belongs to a public user album
-        image_hash = fname.split(".")[0].split("_")[0]  # janky alert
         user = User.objects.filter(id=token["user_id"]).only("id").first()
         if photo.owner == user or user in photo.shared_to.all():
             response = HttpResponse()
@@ -1107,7 +1145,10 @@ class UnifiedMediaAccessView(APIView):
                     photo = Photo.objects.filter(query, pk=fname).first()
                 else:
                     photo = Photo.objects.filter(query, image_hash=fname).first()
-                if not photo or photo.main_file.embedded_media.count() < 1:
+                embedded_media_file = (
+                    photo.main_file.embedded_media.first() if photo else None
+                )
+                if not photo or not embedded_media_file:
                     raise Photo.DoesNotExist()
             except Photo.DoesNotExist:
                 return HttpResponse(status=404)
@@ -1115,11 +1156,10 @@ class UnifiedMediaAccessView(APIView):
                 response = HttpResponse()
                 response["Content-Type"] = "video/mp4"
                 response["X-Accel-Redirect"] = self._protected_media_url(
-                    path, fname + "_1.mp4"
+                    path, os.path.basename(embedded_media_file.path)
                 )
                 return response
-            file_path = os.path.join(settings.MEDIA_ROOT, path, fname + "_1.mp4")
-            return self._serve_file_direct(file_path, "video/mp4")
+            return self._serve_file_direct(embedded_media_file.path, "video/mp4")
 
         # Determine photo by hash
         image_hash = fname.split(".")[0].split("_")[0]
@@ -1347,7 +1387,12 @@ class ZipListPhotosView_V2(APIView):
         if isinstance(include_stacked, (list, tuple)):
             include_stacked = include_stacked[0] if include_stacked else False
         if isinstance(include_stacked, str):
-            include_stacked = include_stacked.strip().lower() in ("1", "true", "yes", "on")
+            include_stacked = include_stacked.strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
         include_stacked = bool(include_stacked)
 
         photo_query = Photo.objects.filter(owner=self.request.user)

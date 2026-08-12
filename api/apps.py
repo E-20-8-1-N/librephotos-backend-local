@@ -1,4 +1,8 @@
+import logging
+
 from django.apps import AppConfig
+
+logger = logging.getLogger(__name__)
 
 
 class ApiConfig(AppConfig):
@@ -7,3 +11,13 @@ class ApiConfig(AppConfig):
 
     def ready(self):
         from api import signals  # noqa: F401
+        from api.util import reconfigure_logging
+
+        try:
+            reconfigure_logging()
+        except Exception:
+            logger.warning(
+                "Could not reconfigure logging from database settings; "
+                "using defaults. This is expected during initial migration.",
+                exc_info=True,
+            )

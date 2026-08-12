@@ -1,5 +1,5 @@
-import io
 import os
+import tempfile
 import zipfile
 
 from django.conf import settings
@@ -34,7 +34,11 @@ def zip_photos_task(job_id, user, photos, filename):
     try:
         if not os.path.exists(output_directory):
             os.mkdir(output_directory)
-        mf = io.BytesIO()
+        zip_output_path = os.path.join(output_directory, zip_file_name)
+        # Write directly to a temp file on disk instead of BytesIO to avoid
+        # holding the entire zip in memory (which can be multi-GB).
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=output_directory, suffix=".zip.tmp")
+        os.close(tmp_fd)
         files_added = {}  # Track files by path to avoid duplicates
 
         for photo in photos:
@@ -97,22 +101,24 @@ def zip_photos_task(job_id, user, photos, filename):
                 
                 files_added[file_obj.path] = file_name
                 
-                with zipfile.ZipFile(mf, mode="a", compression=zipfile.ZIP_DEFLATED) as zf:
+                with zipfile.ZipFile(tmp_path, mode="a", compression=zipfile.ZIP_DEFLATED) as zf:
                     zf.write(file_obj.path, arcname=file_name)
             
             lrj.update_progress(current=done_count, target=count)
         
-        with open(os.path.join(output_directory, zip_file_name), "wb") as output_file:
-            output_file.write(mf.getvalue())
+        os.replace(tmp_path, zip_output_path)
 
     except Exception as e:
         util.logger.error(f"Error while converting files to zip: {e}")
+        # Clean up temp file on error
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     lrj.complete()
     # scheduling a task to delete the zip file after a day
     execution_time = timezone.now() + timezone.timedelta(days=1)
     schedule("api.all_tasks.delete_zip_file", filename, next_run=execution_time)
-    return os.path.join(output_directory, zip_file_name)
+    return zip_output_path
 
 
 def delete_zip_file(filename):

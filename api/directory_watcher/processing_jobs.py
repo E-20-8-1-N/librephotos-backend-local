@@ -17,7 +17,11 @@ from api import util
 from api.face_classify import cluster_all_faces
 from api.models import Face, LongRunningJob, Photo
 from api.models.photo_caption import PhotoCaption
-from api.directory_watcher.utils import update_scan_counter
+from api.directory_watcher.utils import (
+    CANCELLATION_CHECK_INTERVAL,
+    is_job_cancelled,
+    update_scan_counter,
+)
 
 
 def generate_face_embeddings(user, job_id: UUID):
@@ -42,7 +46,11 @@ def generate_face_embeddings(user, job_id: UUID):
         lrj.update_progress(current=0, target=faces.count())
         db.connections.close_all()
 
-        for face in faces:
+        for idx, face in enumerate(faces.iterator()):
+            # Check for cancellation periodically
+            if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
+                util.logger.info("Generate face embeddings job cancelled")
+                return
             failed = False
             error = None
             try:
@@ -65,7 +73,7 @@ def generate_face_embeddings(user, job_id: UUID):
 
 def generate_tags(user, job_id: UUID, full_scan=False):
     """
-    Generate image tags (Places365 captions) for photos.
+    Generate image tags via the caption-generator service.
     
     Args:
         user: The user whose photos to process
@@ -86,16 +94,13 @@ def generate_tags(user, job_id: UUID, full_scan=False):
             .order_by("-finished_at")
             .first()
         )
-        from constance import config as site_config
-
-        tagging_model = site_config.TAGGING_MODEL
 
         existing_photos = Photo.objects.filter(
             Q(owner=user.id)
             & (
                 Q(caption_instance__isnull=True)
                 | Q(caption_instance__captions_json__isnull=True)
-                | Q(**{f"caption_instance__captions_json__{tagging_model}__isnull": True})
+                | Q(caption_instance__captions_json__caption_generator__isnull=True)
             )
         )
         if not full_scan and last_scan:
@@ -108,7 +113,11 @@ def generate_tags(user, job_id: UUID, full_scan=False):
         lrj.update_progress(current=0, target=existing_photos.count())
         db.connections.close_all()
 
-        for photo in existing_photos:
+        for idx, photo in enumerate(existing_photos.iterator()):
+            # Check for cancellation periodically
+            if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
+                util.logger.info("Generate tags job cancelled")
+                return
             AsyncTask(generate_tag_job, photo, job_id).run()
 
     except Exception as err:
@@ -119,7 +128,9 @@ def generate_tags(user, job_id: UUID, full_scan=False):
 
 def generate_tag_job(photo: Photo, job_id: str):
     """
-    Worker task to generate tags for a single photo.
+    Worker task to generate tags (and captions) for a single photo.
+    
+    Uses the caption-generator service which returns both caption and tags.
     
     Args:
         photo: The photo to process
@@ -182,7 +193,7 @@ def generate_im2txt_captions(user, job_id: UUID, full_scan=False):
         lrj.update_progress(current=0, target=existing_photos.count())
         db.connections.close_all()
 
-        for photo in existing_photos:
+        for photo in existing_photos.iterator():
             AsyncTask(generate_im2txt_job, photo, job_id).run()
 
     except Exception as err:
@@ -193,7 +204,10 @@ def generate_im2txt_captions(user, job_id: UUID, full_scan=False):
 
 def generate_im2txt_job(photo: Photo, job_id: str):
     """
-    Worker task to generate im2txt captions for a single photo.
+    Worker task to generate im2txt captions (and tags) for a single photo.
+
+    Calls generate_captions_im2txt which uses the caption-generator service
+    to produce both caption and tags in a single call.
 
     Args:
         photo: The photo to process
@@ -204,7 +218,7 @@ def generate_im2txt_job(photo: Photo, job_id: str):
     try:
         photo.refresh_from_db()
         caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
-        caption_instance.recreate_search_captions()
+        caption_instance.generate_captions_im2txt(commit=True)
     except Exception as err:
         util.logger.exception("An error occurred: %s", photo.image_hash)
         print(f"[ERR]: {err}")
@@ -247,7 +261,11 @@ def add_geolocation(user, job_id: UUID, full_scan=False):
         lrj.update_progress(current=0, target=existing_photos.count())
         db.connections.close_all()
 
-        for photo in existing_photos:
+        for idx, photo in enumerate(existing_photos.iterator()):
+            # Check for cancellation periodically
+            if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
+                util.logger.info("Add geolocation job cancelled")
+                return
             AsyncTask(geolocation_job, photo, job_id).run()
 
     except Exception as err:
@@ -315,7 +333,11 @@ def scan_faces(user, job_id: UUID, full_scan=False):
         lrj.update_progress(current=0, target=existing_photos.count())
         db.connections.close_all()
 
-        for photo in existing_photos:
+        for idx, photo in enumerate(existing_photos.iterator()):
+            # Check for cancellation periodically
+            if idx % CANCELLATION_CHECK_INTERVAL == 0 and is_job_cancelled(job_id):
+                util.logger.info("Scan faces job cancelled")
+                return
             failed = False
             error = None
             try:

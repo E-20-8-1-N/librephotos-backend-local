@@ -96,12 +96,18 @@ PAM_USERS = {
 
 Q_CLUSTER = {
     "name": "DjangORM",
+    # Explicit worker count. Without this, django-q2 defaults to
+    # multiprocessing.cpu_count(), which on typical hosts spawns 4-16
+    # worker processes each carrying a full Django/NumPy/Torch import
+    # (~300-500 MB RSS each). Override with Q_WORKERS env var if needed.
+    "workers": int(os.getenv("Q_WORKERS", "2")),
     "queue_limit": 50,
-    "recycle": 50,
+    "recycle": int(os.getenv("Q_RECYCLE", "25")),
     "timeout": 10000000,
     "retry": 20000000,
     "orm": "default",
-    "max_rss": 300000,
+    # Hard RSS ceiling per worker in KB; worker re-execs when exceeded.
+    "max_rss": int(os.getenv("Q_MAX_RSS_KB", "300000")),
     "poll": 1,
 }
 
@@ -182,6 +188,21 @@ CONSTANCE_CONFIG = {
     "CAPTIONING_MODEL": ("moondream", "Captioning model", "captioning_model"),
     "LLM_MODEL": ("moondream", "Large Language Model", "llm_model"),
     "TAGGING_MODEL": ("places365", "Tagging model", "tagging_model"),
+    "FACE_RECOGNITION_MODEL": (
+        "buffalo_sc",
+        "Face recognition model",
+        "face_recognition_model",
+    ),
+    "LOG_MAX_BYTES": (
+        200 * 1024 * 1024,
+        "Maximum log file size in bytes before rotation (default 200 MB)",
+        int,
+    ),
+    "LOG_BACKUP_COUNT": (
+        10,
+        "Number of rotated log files to keep (default 10)",
+        int,
+    ),
 }
 
 INTERNAL_IPS = ("127.0.0.1", "localhost")

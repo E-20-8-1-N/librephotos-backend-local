@@ -28,7 +28,7 @@ class Tags:
     REGION_INFO = "XMP:RegionInfo"
     REGION_INFO_WRITE = "XMP-mwg-rs:RegionInfo"
     SUBJECT = "XMP:Subject"
-    KEYWORDS_IPTC = "IPTC:Keywords"
+    IPTC_KEYWORDS = "IPTC:Keywords"
     TITLE = "XMP:Title"
     TITLE_WRITE = "XMP-dc:Title"
     TITLE_IPTC_WRITE = "IPTC:ObjectName"

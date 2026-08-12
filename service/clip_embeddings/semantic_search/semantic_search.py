@@ -1,6 +1,7 @@
 import gc
 
 import numpy as np
+import torch
 import PIL
 from pillow_heif import register_heif_opener
 register_heif_opener() # Register HEIF opener for Pillow
@@ -20,6 +21,8 @@ class SemanticSearch:
         del self.model
         self.model = None
         gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         self.model_is_loaded = False
         pass
 
@@ -27,49 +30,56 @@ class SemanticSearch:
         self.model = SentenceTransformer(model)
 
     def calculate_clip_embeddings(self, img_paths, model):
-        import torch
-
         if not self.model_is_loaded:
             self.load(model)
         imgs = []
-        if type(img_paths) is list:
-            for path in img_paths:
-                try:
-                    with PIL.Image.open(path) as img:
-                        imgs.append(img)
-                except PIL.UnidentifiedImageError:
-                    print(f"Error loading image: {path}")
-        else:
+        is_batch = isinstance(img_paths, list)
+        paths = img_paths if is_batch else [img_paths]
+        for path in paths:
             try:
-                with PIL.Image.open(img_paths) as img:
-                    imgs.append(img)
+                img = PIL.Image.open(path)
+                img.load()  # Force pixel data into memory
+                imgs.append(img)
             except PIL.UnidentifiedImageError:
-                print(f"Error loading image: {img_paths}")
+                print(f"Error loading image: {path}")
+            except Exception as e:
+                print(f"Error loading image {path}: {e}")
 
         try:
-            imgs_emb = self.model.encode(imgs, batch_size=32, convert_to_tensor=True)
-            if torch.cuda.is_available():
-                if type(img_paths) is list:
-                    magnitudes = list(
-                        map(lambda x: np.linalg.norm(x.cpu().numpy()), imgs_emb)
-                    )
+            with torch.inference_mode():
+                imgs_emb_tensor = self.model.encode(
+                    imgs, batch_size=16, convert_to_tensor=True
+                )
+                # Move to CPU numpy ASAP and release the GPU/torch tensor so
+                # a 64-image batch does not stay resident between calls.
+                imgs_emb_np = imgs_emb_tensor.detach().cpu().numpy()
+            del imgs_emb_tensor
+            # Close all PIL images to free memory
+            for img in imgs:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+            del imgs
 
-                    return imgs_emb, magnitudes
-                else:
-                    img_emb = imgs_emb[0].cpu().numpy().tolist()
-                    magnitude = np.linalg.norm(img_emb)
+            magnitudes = np.linalg.norm(imgs_emb_np, axis=1)
 
-                    return img_emb, magnitude
+            if is_batch:
+                result = ([row for row in imgs_emb_np], magnitudes.tolist())
             else:
-                if type(img_paths) is list:
-                    magnitudes = map(np.linalg.norm, imgs_emb)
-                    return imgs_emb, magnitudes
-                else:
-                    img_emb = imgs_emb[0].tolist()
-                    magnitude = np.linalg.norm(img_emb)
+                result = (imgs_emb_np[0].tolist(), float(magnitudes[0]))
 
-                return img_emb, magnitude
+            del imgs_emb_np
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return result
         except Exception as e:
+            for img in imgs:
+                try:
+                    img.close()
+                except Exception:
+                    pass
             print(f"Error in calculating clip embeddings: {e}")
             raise e
 
@@ -77,7 +87,11 @@ class SemanticSearch:
         if not self.model_is_loaded:
             self.load(model)
 
-        query_emb = self.model.encode([query], convert_to_tensor=True)[0].tolist()
+        with torch.inference_mode():
+            q_tensor = self.model.encode([query], convert_to_tensor=True)
+            query_emb = q_tensor[0].detach().cpu().numpy().tolist()
+        del q_tensor
         magnitude = np.linalg.norm(query_emb)
-
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return query_emb, magnitude
