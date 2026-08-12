@@ -1,3 +1,5 @@
+import gc
+import os
 import time
 
 import gevent
@@ -22,9 +24,34 @@ SUPPORTED_FACE_MODELS = {
     "buffalo_sc",
 }
 
+# Unload models after idle timeout
+IDLE_TIMEOUT_SECONDS = int(os.getenv("FACE_IDLE_TIMEOUT_SECONDS", "60"))
+
 
 def log(message):
     print(f"face_recognition: {message}")
+
+
+def _unload_models():
+    """Free all loaded face analysis models."""
+    global face_analysis_models
+    if face_analysis_models:
+        log(f"unloading {len(face_analysis_models)} model(s) to free memory")
+        face_analysis_models.clear()
+        gc.collect()
+
+
+def _idle_unloader():
+    """Background greenlet that unloads models after idle timeout."""
+    global last_request_time
+    while True:
+        gevent.sleep(30)
+        if (
+            face_analysis_models
+            and last_request_time is not None
+            and time.time() - last_request_time > IDLE_TIMEOUT_SECONDS
+        ):
+            _unload_models()
 
 
 def _normalize_model_name(model_name):
@@ -36,6 +63,15 @@ def _normalize_model_name(model_name):
 def _get_face_analysis(model_name):
     model_name = _normalize_model_name(model_name)
     if model_name not in face_analysis_models:
+        # Only keep one face model loaded at a time. Drop any previously
+        # loaded (different) model before loading the new one to avoid
+        # RSS growth when users switch buffalo_* variants.
+        if face_analysis_models:
+            log(
+                f"evicting {list(face_analysis_models.keys())} before loading {model_name}"
+            )
+            face_analysis_models.clear()
+            gc.collect()
         from insightface.app import FaceAnalysis
 
         face_analysis = FaceAnalysis(
@@ -45,6 +81,25 @@ def _get_face_analysis(model_name):
             providers=["CPUExecutionProvider"],
         )
         face_analysis.prepare(ctx_id=-1, det_size=(640, 640))
+        # Force each loaded ONNX session to use a single thread to avoid
+        # ORT spawning a thread pool per session (otherwise this single
+        # process can easily hit 20-30 threads).
+        try:
+            ort_threads = int(os.getenv("ORT_NUM_THREADS", "1"))
+            for _model_obj in face_analysis.models.values():
+                session = getattr(_model_obj, "session", None)
+                if session is not None:
+                    # These are read-only after session creation in newer ORT
+                    # builds, so wrap in try/except.
+                    try:
+                        session.set_providers(["CPUExecutionProvider"])
+                    except Exception:
+                        pass
+            # Ensure env vars propagate for any later-created session.
+            os.environ.setdefault("OMP_NUM_THREADS", str(ort_threads))
+            os.environ.setdefault("MKL_NUM_THREADS", str(ort_threads))
+        except Exception as e:
+            log(f"could not tune ORT threads: {e}")
         face_analysis_models[model_name] = face_analysis
     return face_analysis_models[model_name]
 
@@ -170,4 +225,5 @@ if __name__ == "__main__":
     log("service starting")
     server = WSGIServer(("0.0.0.0", 8005), app)
     server_thread = gevent.spawn(server.serve_forever)
-    gevent.joinall([server_thread])
+    idle_thread = gevent.spawn(_idle_unloader)
+    gevent.joinall([server_thread, idle_thread])

@@ -95,6 +95,13 @@ def create_thumbnail(
             source_path = input_path
         # ====================== Pillow Processing ======================
         with Image.open(source_path) as img:
+            # Memory optimization: ask the JPEG decoder to return a pre-scaled
+            # image so we never allocate the full-resolution pixel buffer for
+            # a tiny thumbnail. No-op for formats that don't support draft().
+            try:
+                img.draft("RGB", (output_height * 4, output_height * 4))
+            except Exception:
+                pass
             # Apply EXIF-based auto-rotation (what pyvips did automatically)
             img = ImageOps.exif_transpose(img)
             # Convert to RGB if necessary (required for JPEG/WebP)
