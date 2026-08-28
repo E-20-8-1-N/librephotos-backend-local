@@ -1,0 +1,50 @@
+services:
+  backend:
+    container_name: backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - SECRET_KEY=librephotossk
+      - BACKEND_HOST=backend
+      - ADMIN_EMAIL=truenas_admin@example.com
+      - ADMIN_USERNAME=truenas_admin
+      - ADMIN_PASSWORD=123456
+      - DB_BACKEND=postgresql
+      - DB_NAME=librephotos
+      - DB_USER=docker
+      - DB_PASS=AaAa1234
+      - DB_HOST=db
+      - DB_PORT=5432
+      - WEB_CONCURRENCY=2
+      - ALLOW_UPLOAD=True
+      - SERVE_FRONTEND=true
+      - HEAVYWEIGHT_PROCESS=1
+      - DEBUG=0
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/openblas-pthread
+      - SERVE_FRONTEND=true
+    image: cetapod/librephotos_backend_unified_local:latest
+    ports:
+      - '3010:8001'
+    restart: unless-stopped
+    volumes:
+      - /mnt:/data
+      - ./librephotos/data/protected_media:/protected_media
+      - ./librephotos/data/logs:/logs
+      - ./librephotos/data/cache:/root/.cache
+      - /etc:/etc:ro
+  db:
+    container_name: db
+    environment:
+      - POSTGRES_USER=docker
+      - POSTGRES_PASSWORD=AaAa1234
+      - POSTGRES_DB=librephotos
+    healthcheck:
+      interval: 5s
+      retries: 5
+      test: psql -U docker -d librephotos -c "SELECT 1;"
+      timeout: 5s
+    image: cetapod/librephotos_postgres_local:latest
+    restart: unless-stopped
+    volumes:
+      - ./librephotos/data/dbcursor:/var/lib/postgresql/data
