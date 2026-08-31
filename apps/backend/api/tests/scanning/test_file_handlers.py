@@ -224,18 +224,15 @@ class CreateNewImageTests(FileHandlerTestBase):
         self.assertEqual([path], [f.path for f in photo.files.all()])
         self.assertEqual(File.IMAGE, photo.main_file.type)
 
-    def test_rescanning_same_path_reuses_file_but_creates_second_photo(self):
-        """Current behavior (documented, arguably a bug): calling
-        create_new_image twice for the same standalone image reuses the File
-        (unique path) but builds a *second* Photo, and the File's m2m /
-        main_file are re-pointed at the newer Photo."""
+    def test_rescanning_same_path_reuses_file_and_photo(self):
+        """Repeated imports of a standalone image reuse its canonical records."""
         path = _write_image(self.p("dup.png"), width=16)
 
         first = create_new_image(self.user, path)
         second = create_new_image(self.user, path)
 
-        self.assertNotEqual(first.pk, second.pk)
-        self.assertEqual(2, Photo.objects.count())
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(1, Photo.objects.count())
         self.assertEqual(1, File.objects.filter(path=path).count())
         self.assertEqual(first.image_hash, second.image_hash)
 

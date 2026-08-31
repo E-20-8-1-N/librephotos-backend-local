@@ -411,6 +411,8 @@ class PhotoCaption(models.Model):
             tags = tag_result
         elif isinstance(tag_result, dict):
             tags = tag_result.get("tags", [])
+        elif isinstance(tag_result, str):
+            tags = [tag.strip() for tag in tag_result.split(",") if tag.strip()]
         else:
             tags = []
 

@@ -118,7 +118,7 @@ def get_user_from_path(raw_path, user_home_directory_prefix):
         )
 
     abs_path = os.path.abspath(raw_path)
-    
+
     # Enforce fixed prefix
     prefix = os.path.abspath(user_home_directory_prefix) + os.sep
     if not abs_path.startswith(prefix):

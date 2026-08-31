@@ -10,6 +10,7 @@ import os
 
 import pytz
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
 
 from api import util
@@ -65,7 +66,7 @@ def create_file_record(user, path) -> File | None:
         util.logger.warning(f"embedded content file found {path}")
         return None
 
-    # Create the File record (File.create handles race conditions via unique path constraint)
+    # File.create handles concurrent path and content-hash conflicts.
     file = File.create(path, user)
     return file
 
@@ -91,20 +92,37 @@ def _attach_embedded_motion_video(user, photo: Photo, file: File) -> File | None
 
 def _adopt_files_into_photo(photo: Photo, files: list[File], main_file: File, job_id):
     """Attach missing files to an existing Photo and upgrade its main_file."""
-    for f in files:
-        if not photo.files.filter(hash=f.hash).exists():
-            photo.files.add(f)
+    existing_hashes = set(photo.files.values_list("hash", flat=True))
+    missing_files = [file for file in files if file.hash not in existing_hashes]
+    if missing_files:
+        photo.files.add(*missing_files)
+        for file in missing_files:
             util.logger.info(
-                f"job {job_id}: Attached file {f.path} to existing Photo {photo.image_hash}"
+                f"job {job_id}: Attached file {file.path} to existing "
+                f"Photo {photo.image_hash}"
             )
 
-    if not photo.main_file:
-        return
+    update_fields = []
+    if photo.main_file:
+        current_priority = FILE_TYPE_PRIORITY.get(photo.main_file.type, 999)
+        replace_main_file = (
+            FILE_TYPE_PRIORITY.get(main_file.type, 999) < current_priority
+        )
+    else:
+        replace_main_file = True
 
-    current_priority = FILE_TYPE_PRIORITY.get(photo.main_file.type, 999)
-    if FILE_TYPE_PRIORITY.get(main_file.type, 999) < current_priority:
+    if replace_main_file:
         photo.main_file = main_file
-        photo.save(update_fields=["main_file"])
+        photo.video = main_file.type == File.VIDEO
+        update_fields.extend(["main_file", "video"])
+
+    if photo.removed:
+        photo.removed = False
+        photo.in_trashcan = False
+        update_fields.extend(["removed", "in_trashcan"])
+
+    if update_fields:
+        photo.save(update_fields=update_fields)
 
 
 def group_files_into_photo(user, files: list[File], job_id) -> Photo | None:
@@ -123,55 +141,74 @@ def group_files_into_photo(user, files: list[File], job_id) -> Photo | None:
         job_id: Job ID for logging
 
     Returns:
-        The created Photo, or None if no valid files
+        The created or existing Photo, or None if no valid files
     """
     if not files:
         return None
 
-    # Filter out metadata files for main photo creation - they're sidecars
-    non_metadata_files = [f for f in files if f.type != File.METADATA_FILE]
+    file_hashes = sorted({file.hash for file in files})
 
-    if not non_metadata_files:
-        # Only metadata files - no photo to create
-        util.logger.warning(f"job {job_id}: Only metadata files in group, skipping")
-        return None
+    # The backend scan processes groups concurrently. Locking the canonical
+    # File rows serializes imports that resolve to the same hash or path, so a
+    # second worker sees the Photo created by the first worker.
+    with transaction.atomic():
+        files = list(
+            File.objects.select_for_update()
+            .filter(hash__in=file_hashes)
+            .order_by("hash")
+        )
 
-    # Select main file based on priority
-    main_file = select_main_file(non_metadata_files)
-    if not main_file:
-        return None
+        # Filter out metadata files for main photo creation - they're sidecars
+        non_metadata_files = [
+            file for file in files if file.type != File.METADATA_FILE
+        ]
+        if not non_metadata_files:
+            # Only metadata files - no photo to create
+            util.logger.warning(
+                f"job {job_id}: Only metadata files in group, skipping"
+            )
+            return None
 
-    # Check if a Photo already exists with any of these files. Matching on
-    # main_file as well as the files m2m re-adopts photos whose file went
-    # missing and reappeared: _check_files detaches a missing file from the
-    # m2m but keeps main_file pointing at it, so without that match a
-    # reappearing file would spawn a duplicate Photo with the same image_hash.
-    existing_photo = Photo.objects.filter(
-        Q(owner=user) & (Q(files__in=files) | Q(main_file__in=files))
-    ).first()
+        # Select main file based on priority
+        main_file = select_main_file(non_metadata_files)
+        if not main_file:
+            return None
 
-    if existing_photo:
-        _adopt_files_into_photo(existing_photo, files, main_file, job_id)
-        return existing_photo
+        file_paths = [file.path for file in files]
+        existing_photo = (
+            Photo.objects.filter(owner=user)
+            .filter(
+                Q(image_hash__in=file_hashes)
+                | Q(files__hash__in=file_hashes)
+                | Q(files__path__in=file_paths)
+                | Q(main_file__hash__in=file_hashes)
+                | Q(main_file__path__in=file_paths)
+            )
+            .distinct()
+            .order_by("removed", "in_trashcan", "added_on", "id")
+            .first()
+        )
 
-    # Create new Photo
-    photo = Photo()
-    photo.image_hash = main_file.hash
-    photo.owner = user
-    photo.added_on = datetime.datetime.now().replace(tzinfo=pytz.utc)
-    photo.geolocation_json = {}
-    photo.video = main_file.type == File.VIDEO
-    photo.save()
+        if existing_photo:
+            _adopt_files_into_photo(existing_photo, files, main_file, job_id)
+            util.logger.info(
+                f"job {job_id}: Reused Photo {existing_photo.image_hash} for "
+                f"{len(files)} file(s)"
+            )
+            return existing_photo
 
-    # Add all files to the photo
-    for f in files:
-        photo.files.add(f)
-
-    photo.main_file = main_file
-    photo.save()
-
-    if _attach_embedded_motion_video(user, photo, main_file):
+        photo = Photo(
+            image_hash=main_file.hash,
+            owner=user,
+            added_on=datetime.datetime.now().replace(tzinfo=pytz.utc),
+            geolocation_json={},
+            video=main_file.type == File.VIDEO,
+            main_file=main_file,
+        )
         photo.save()
+        photo.files.add(*files)
+
+    _attach_embedded_motion_video(user, photo, main_file)
 
     util.logger.info(
         f"job {job_id}: Created Photo {photo.image_hash} with {len(files)} file(s)"
@@ -181,13 +218,26 @@ def group_files_into_photo(user, files: list[File], job_id) -> Photo | None:
 
 def _attach_metadata_sidecar(user, path) -> None:
     """Attach an XMP sidecar to the Photo it describes, if one exists."""
-    photo_name = os.path.splitext(os.path.basename(path))[0]
-    photo_dir = os.path.dirname(path)
-    photo = Photo.objects.filter(
-        Q(files__path__contains=photo_dir)
-        & Q(files__path__contains=photo_name)
-        & ~Q(files__path__contains=os.path.basename(path))
-    ).first()
+    sidecar_base = os.path.splitext(path)[0]
+    media_types = (File.IMAGE, File.VIDEO, File.RAW_FILE)
+    photo = (
+        Photo.objects.filter(owner=user)
+        .filter(
+            Q(files__path=sidecar_base, files__type__in=media_types)
+            | Q(
+                files__path__startswith=f"{sidecar_base}.",
+                files__type__in=media_types,
+            )
+            | Q(main_file__path=sidecar_base, main_file__type__in=media_types)
+            | Q(
+                main_file__path__startswith=f"{sidecar_base}.",
+                main_file__type__in=media_types,
+            )
+        )
+        .distinct()
+        .order_by("added_on", "id")
+        .first()
+    )
 
     if not photo:
         util.logger.warning(f"no photo to metadata file found {path}")
@@ -244,7 +294,7 @@ def create_new_image(user, path) -> Photo | None:
         path: The file path of the image.
 
     Returns:
-        The created Photo object if successful, otherwise returns None.
+        The created or existing Photo object if successful, otherwise returns None.
 
     Note:
         This function implements file variant grouping (PhotoPrism-like):
@@ -268,21 +318,8 @@ def create_new_image(user, path) -> Photo | None:
         return existing_photo
 
     # === Standard Photo Creation ===
-    photo = Photo()
-    photo.image_hash = hash_value
-    photo.owner = user
-    photo.added_on = datetime.datetime.now().replace(tzinfo=pytz.utc)
-    photo.geolocation_json = {}
-    photo.video = is_video(path)
-    photo.save()
     file = File.create(path, user)
-
-    _attach_embedded_motion_video(user, photo, file)
-
-    photo.files.add(file)
-    photo.main_file = file
-    photo.save()
-    return photo
+    return group_files_into_photo(user, [file], "direct-import")
 
 
 def handle_new_image(user, path, job_id, photo=None):
