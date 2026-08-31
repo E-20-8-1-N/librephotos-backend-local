@@ -26,7 +26,6 @@ from django.views.decorators.vary import vary_on_cookie
 from django_q.tasks import AsyncTask, Chain
 from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets
-from rest_framework.authentication import BasicAuthentication
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView, exception_handler
@@ -120,7 +119,7 @@ def get_user_from_path(raw_path, user_home_directory_prefix):
         )
 
     abs_path = os.path.abspath(raw_path)
-    
+
     # Enforce fixed prefix
     prefix = os.path.abspath(user_home_directory_prefix) + os.sep
     if not abs_path.startswith(prefix):

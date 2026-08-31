@@ -104,7 +104,7 @@ def generate_tags(user, job_id: UUID, full_scan=False):
             & (
                 Q(caption_instance__isnull=True)
                 | Q(caption_instance__captions_json__isnull=True)
-                | Q(caption_instance__captions_json__tag__isnull=True)
+                | Q(caption_instance__captions_json__im2txt_tag__isnull=True)
             )
         )
         if not full_scan and last_scan:

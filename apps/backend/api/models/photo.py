@@ -690,7 +690,7 @@ class Photo(models.Model):
                 duplicate.delete()
 
         return result
-            
+
     def delete_duplicate(self, duplicate_path):
         # To-Do: Handle wrong file permissions
         for file in self.files.all():
@@ -709,7 +709,7 @@ class Photo(models.Model):
                 return True
         logger.info(f"Path is not valid: {duplicate_path}")
         return False
-    
+
     def all_file_paths(self):
         """Return a list of all physical file paths linked to this Photo."""
         return [f.path for f in self.files.all()]
@@ -717,13 +717,17 @@ class Photo(models.Model):
     def missing_on_disk(self):
         """
         Determine if the photo is missing its core file(s) on disk.
-        Returns True if none of its linked file paths exist anymore.
+        Returns True if none of its linked media file paths exist anymore.
         """
-        paths = self.all_file_paths()
-        if len(paths) == 0:
-            return True
-        any_exists = any(os.path.exists(p) for p in paths)
-        return not any_exists
+        media_files = {
+            file.pk: file
+            for file in self.files.exclude(type=File.METADATA_FILE).all()
+        }
+        if self.main_file and self.main_file.type != File.METADATA_FILE:
+            media_files[self.main_file.pk] = self.main_file
+        return not any(
+            file.path and os.path.exists(file.path) for file in media_files.values()
+        )
 
     def rotate(self, angle: int = 0, flip_horizontal: bool = False) -> None:
         """Rotate the photo non-destructively.

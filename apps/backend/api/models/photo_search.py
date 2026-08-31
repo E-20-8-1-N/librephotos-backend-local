@@ -62,11 +62,10 @@ def ensure_caption_generator_ready() -> bool:
             )
             container.start()
     except Exception as e:
-        util.logger.error(
+        util.logger.exception(
             "Failed to start caption-generator container '%s': %s",
             CAPTION_GENERATOR_HOST,
             e,
-            exc_info=True,
         )
         return False
 
@@ -101,11 +100,8 @@ def generate_image_caption(image_path: str, file_ext: str):
                 image_path,
             )
             return None, None
-        
-        payload = { 
-            "file_path": image_path, 
-            "file_ext": file_ext 
-        }
+
+        payload = {"file_path": image_path, "file_ext": file_ext}
 
         attempts = max(CAPTION_GENERATOR_RETRIES, 0) + 1
         for attempt in range(1, attempts + 1):
@@ -184,7 +180,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                 util.logger.error(f"Failed to generate caption for {image_path}: {e}")
                 break
     except Exception as e:
-        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+        util.logger.exception(f"Failed to generate caption for {image_path}: {e}")
         pass
     finally:
         import gc
@@ -257,7 +253,7 @@ class PhotoSearch(models.Model):
             im2txt_tag = captions_json.get("im2txt_tag", "")
             if im2txt_tag:
                 search_captions += im2txt_tag + " "
-            
+
             im2txt_caption = captions_json.get("im2txt", "")
             if im2txt_caption:
                 search_captions += im2txt_caption + " "

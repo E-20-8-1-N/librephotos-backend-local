@@ -64,11 +64,10 @@ def ensure_caption_generator_ready() -> bool:
             )
             container.start()
     except Exception as e:
-        util.logger.error(
+        util.logger.exception(
             "Failed to start caption-generator container '%s': %s",
             CAPTION_GENERATOR_HOST,
             e,
-            exc_info=True,
         )
         return False
 
@@ -183,7 +182,7 @@ def generate_image_caption(image_path: str, file_ext: str):
                 util.logger.error(f"Failed to generate caption for {image_path}: {e}")
                 break
     except Exception as e:
-        util.logger.error(f"Failed to generate caption for {image_path}: {e}", exc_info=True)
+        util.logger.exception(f"Failed to generate caption for {image_path}: {e}")
         pass
     finally:
         import gc
@@ -340,7 +339,7 @@ class PhotoCaption(models.Model):
         """Generate tag captions using the caption-generator service.
 
         Tags are returned alongside captions from generate_image_caption()
-        and stored under the 'tag' key in captions_json.
+        and stored under the 'im2txt_tag' key in captions_json.
         """
         if not settings.FEATURE_SCENE_CLASSIFICATION:
             util.logger.info("Scene classification is disabled")
@@ -352,7 +351,7 @@ class PhotoCaption(models.Model):
         # Skip if this photo already has tags from the caption generator
         if (
             self.captions_json is not None
-            and self.captions_json.get("tag") is not None
+            and self.captions_json.get("im2txt_tag") is not None
         ):
             return
 
@@ -398,6 +397,8 @@ class PhotoCaption(models.Model):
             tags = tag_result
         elif isinstance(tag_result, dict):
             tags = tag_result.get("tags", [])
+        elif isinstance(tag_result, str):
+            tags = [tag.strip() for tag in tag_result.split(",") if tag.strip()]
         else:
             tags = []
 

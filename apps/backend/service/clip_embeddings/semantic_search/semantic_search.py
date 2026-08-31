@@ -1,11 +1,12 @@
 import gc
 
 import numpy as np
-import torch
 import PIL
+import torch
 from pillow_heif import register_heif_opener
-register_heif_opener() # Register HEIF opener for Pillow
 from sentence_transformers import SentenceTransformer
+
+register_heif_opener()
 
 
 class SemanticSearch:
@@ -54,13 +55,6 @@ class SemanticSearch:
                 # a 64-image batch does not stay resident between calls.
                 imgs_emb_np = imgs_emb_tensor.detach().cpu().numpy()
             del imgs_emb_tensor
-            # Close all PIL images to free memory
-            for img in imgs:
-                try:
-                    img.close()
-                except Exception:
-                    pass
-            del imgs
 
             magnitudes = np.linalg.norm(imgs_emb_np, axis=1)
 
@@ -70,18 +64,19 @@ class SemanticSearch:
                 result = (imgs_emb_np[0].tolist(), float(magnitudes[0]))
 
             del imgs_emb_np
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             return result
         except Exception as e:
+            print(f"Error in calculating clip embeddings: {e}")
+            raise
+        finally:
             for img in imgs:
                 try:
                     img.close()
                 except Exception:
                     pass
-            print(f"Error in calculating clip embeddings: {e}")
-            raise e
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def calculate_query_embeddings(self, query, model):
         if not self.model_is_loaded:
