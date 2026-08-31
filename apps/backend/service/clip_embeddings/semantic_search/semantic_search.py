@@ -77,9 +77,6 @@ class SemanticSearch:
                 result = self.single_embedding(imgs_emb_np)
 
             del imgs_emb_np
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             return result
         except Exception as e:
             print(f"Error in calculating clip embeddings: {e}")
@@ -90,6 +87,9 @@ class SemanticSearch:
                     image.close()
                 except Exception:
                     pass
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def calculate_query_embeddings(self, query, model):
         if not self.model_is_loaded:

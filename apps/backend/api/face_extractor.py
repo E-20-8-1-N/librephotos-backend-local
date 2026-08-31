@@ -1,11 +1,12 @@
 import PIL
 from pillow_heif import register_heif_opener
-register_heif_opener() # Register HEIF opener for Pillow
 
 from api.face_recognition import get_face_locations
 from api.metadata.reader import get_metadata
 from api.metadata.tags import Tags
 from api.util import is_number, logger
+
+register_heif_opener()
 
 
 ORIENTATION_TRANSFORMS = {

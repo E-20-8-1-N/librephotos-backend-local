@@ -11,9 +11,10 @@ Uses pHash (perceptual hash) algorithm which is robust to:
 import imagehash
 from PIL import Image
 from pillow_heif import register_heif_opener
-register_heif_opener() # Register HEIF opener for Pillow
 
 from api.util import logger
+
+register_heif_opener()
 
 # Threshold for considering two images as duplicates
 # pHash produces 64-bit hashes, Hamming distance <= 10 indicates high similarity

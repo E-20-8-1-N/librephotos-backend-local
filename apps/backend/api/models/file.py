@@ -4,8 +4,8 @@ import os
 import magic
 from PIL import Image
 from django.conf import settings
+from django.db import IntegrityError, models, transaction
 from pillow_heif import register_heif_opener
-from django.db import models
 
 from api import util
 
@@ -42,7 +42,7 @@ class File(models.Model):
     embedded_media = models.ManyToManyField("self", symmetrical=False)
 
     def __str__(self):
-        return self.path + " " + self._find_out_type()
+        return f"{self.path} {self.get_type_display()}"
 
     @staticmethod
     def create(path: str, user):
@@ -51,10 +51,12 @@ class File(models.Model):
 
         Uses get_or_create pattern to handle unique path constraint:
         - If a File with this path already exists, return it
-        - If not, create a new File with calculated hash
+        - If a File with the calculated hash exists, return that canonical File
+        - Otherwise, create a new File
 
         Handles race conditions: if concurrent creates happen for the same
-        path, only one will succeed and others will return the existing file.
+        path or hash, only one will succeed and the others return the existing
+        file.
 
         Note: If file content has changed (different hash), the existing
         File record is returned. Hash updates should be handled separately
@@ -67,8 +69,6 @@ class File(models.Model):
         Returns:
             File: The existing or newly created File instance
         """
-        from django.db import IntegrityError
-
         # Check if a File with this path already exists
         existing = File.objects.filter(path=path).first()
         if existing:
@@ -87,7 +87,11 @@ class File(models.Model):
         file._find_out_type()
 
         try:
-            file.save()
+            # A manually assigned primary key makes save() update an existing
+            # same-hash row. Force an insert so a duplicate hash is handled
+            # below without replacing that row's canonical path.
+            with transaction.atomic():
+                file.save(force_insert=True)
             return file
         except IntegrityError:
             # Race condition: another thread created the file between our check and save
@@ -98,6 +102,16 @@ class File(models.Model):
             # If path doesn't exist, hash collision occurred - fetch by hash
             existing = File.objects.filter(hash=file.hash).first()
             if existing:
+                if (
+                    (not existing.path or not os.path.exists(existing.path))
+                    and os.path.exists(path)
+                ):
+                    with transaction.atomic():
+                        existing = File.objects.select_for_update().get(hash=file.hash)
+                        if not existing.path or not os.path.exists(existing.path):
+                            existing.path = path
+                            existing.missing = False
+                            existing.save(update_fields=["path", "missing"])
                 return existing
             # Re-raise if we can't find the conflicting record
             raise
@@ -110,7 +124,7 @@ class File(models.Model):
             self.type = File.VIDEO
         if is_metadata(self.path):
             self.type = File.METADATA_FILE
-        self.save()
+        return self.type
 
 
 def is_video(path):
@@ -176,9 +190,6 @@ def is_metadata(path):
 
 
 def is_valid_media(path, user) -> bool:
-    ext = os.path.splitext(path)[1].upper()
-    heif_exts = [".HEIC", ".HEIF"]
-
     if is_video(path=path):
         if not settings.FEATURE_VIDEO:
             util.logger.info(f"Video support is disabled, skipping {path}")
@@ -190,11 +201,11 @@ def is_valid_media(path, user) -> bool:
         return True
     if is_raw(path=path):
         return True
-    
+
     # Validation using Pillow (replacing PyVips)
     try:
         with Image.open(path) as img:
-            img.verify() # Reads file header to check validity
+            img.verify()
             return True
     except Exception as e:
         util.logger.info(f"Could not handle {path}, because {str(e)}")

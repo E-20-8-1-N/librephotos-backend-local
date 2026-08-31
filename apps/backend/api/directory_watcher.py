@@ -4,9 +4,6 @@ import stat
 import uuid
 from uuid import UUID
 
-from PIL import Image
-from pillow_heif import register_heif_opener
-register_heif_opener() # Register HEIF opener for Pillow
 import pytz
 from constance import config as site_config
 from django import db
@@ -15,6 +12,7 @@ from django.core.paginator import Paginator
 from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 from django_q.tasks import AsyncTask, Chain
+from pillow_heif import register_heif_opener
 
 from api import util
 from api.batch_jobs import batch_calculate_clip_embedding
@@ -31,6 +29,8 @@ from api.models.file import (
     is_valid_media,
     is_video,
 )
+
+register_heif_opener()
 
 DEFAULT_SCAN_SKIP_EXTENSIONS = ".pdf,.mkv,.avi,.wmv,.flv"
 

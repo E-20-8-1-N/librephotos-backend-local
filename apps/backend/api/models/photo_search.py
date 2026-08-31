@@ -100,11 +100,8 @@ def generate_image_caption(image_path: str, file_ext: str):
                 image_path,
             )
             return None, None
-        
-        payload = { 
-            "file_path": image_path, 
-            "file_ext": file_ext 
-        }
+
+        payload = {"file_path": image_path, "file_ext": file_ext}
 
         attempts = max(CAPTION_GENERATOR_RETRIES, 0) + 1
         for attempt in range(1, attempts + 1):

@@ -4,7 +4,6 @@ from django.conf import settings
 from django.db import models
 from PIL import Image
 from pillow_heif import register_heif_opener
-register_heif_opener() # Register HEIF opener for Pillow
 
 from api.models.photo import Photo
 from api.thumbnails import (
@@ -15,6 +14,8 @@ from api.thumbnails import (
     does_video_thumbnail_exist,
 )
 from api.util import logger
+
+register_heif_opener()
 
 
 class Thumbnail(models.Model):
