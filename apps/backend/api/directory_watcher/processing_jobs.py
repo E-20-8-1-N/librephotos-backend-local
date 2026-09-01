@@ -27,6 +27,7 @@ from api.directory_watcher.utils import (
     update_scan_counter,
 )
 
+BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 def generate_face_embeddings(user, job_id: UUID):
     """
@@ -372,7 +373,7 @@ def _run_ocr_for_photo(photo: Photo):
         return
 
     response = requests.post(
-        "http://localhost:8012/ocr",
+        f"http://{BACKEND_HOST}:8012/ocr",
         json={"image_path": image_path, "min_confidence": OCR_MIN_CONFIDENCE},
         timeout=OCR,
     )
