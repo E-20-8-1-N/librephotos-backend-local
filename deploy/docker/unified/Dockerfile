@@ -1,10 +1,10 @@
 # Multi-stage build: First build the frontend
-FROM node:20-slim as frontend-builder
+FROM node:20-slim AS frontend-builder
 
 RUN npm config set fetch-retry-maxtimeout 60000
 
 WORKDIR /frontend
-ENV CLI_WIDTH 80
+ENV CLI_WIDTH=80
 
 COPY apps/frontend/package.json apps/frontend/yarn.lock ./
 COPY apps/frontend/patches/ ./patches/
@@ -14,12 +14,26 @@ COPY apps/frontend/ ./
 RUN yarn run build
 
 # Second stage: Build the backend with frontend included
-FROM reallibrephotos/librephotos-base:dev
+FROM cetapod/librephotos_backend_base:latest
 
 ARG DEBUG
 ARG MLVALIDATION
 ARG IMAGE_TAG
-ENV IMAGE_TAG ${IMAGE_TAG}
+ENV IMAGE_TAG=${IMAGE_TAG}
+
+# Install necessary packages
+RUN apt-get update && apt-get install -y \
+    nano \
+    vim
+
+# Install HEIF support image libraries
+RUN apt-get install -y \
+    libheif1 \
+    libde265-0 \
+    libde265-dev \
+    x265 \
+    libvips \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /code
 

@@ -4,60 +4,57 @@
 
 services:
   db:
-    image: pgautoupgrade/pgautoupgrade:latest
+    image: cetapod/librephotos_postgres_local:latest
     container_name: db
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=${dbUser}
-      - POSTGRES_PASSWORD=${dbPass}
-      - POSTGRES_DB=${dbName}
+      - POSTGRES_USER=docker
+      - POSTGRES_PASSWORD=AaAa1234
+      - POSTGRES_DB=librephotos
     volumes:
-      - ${data}/dbcursor:/var/lib/postgresql/data
+      - ./librephotos/data/dbcursor:/var/lib/postgresql/data
     healthcheck:
-      test: psql -U ${dbUser} -d ${dbName} -c "SELECT 1;"
+      test: psql -U docker -d librephotos -c "SELECT 1;"
       interval: 5s
       timeout: 5s
       retries: 5
 
   backend:
-    image: reallibrephotos/librephotos-unified:${tag}
+    image: cetapod/librephotos_backend_unified_local:latest
     container_name: backend
     restart: unless-stopped
     volumes:
-      - ${scanDirectory}:/data
-      - ${data}/protected_media:/protected_media
-      - ${data}/logs:${baseLogs:-/logs}
-      - ${data}/cache:/root/.cache
+      - /mnt:/data
+      - ./librephotos/data/protected_media:/protected_media
+      - ./librephotos/data/logs:/logs
+      - ./librephotos/data/cache:/root/.cache
+      - /etc:/etc:ro
     ports:
-      - ${httpPort:-3000}:8001
+      - '3010:8001'
     environment:
-      - SECRET_KEY=${shhhhKey:-}
+      - SECRET_KEY=librephotossk
       - BACKEND_HOST=backend
-      - ADMIN_EMAIL=${adminEmail:-}
-      - ADMIN_USERNAME=${userName:-}
-      - ADMIN_PASSWORD=${userPass:-}
+      - ADMIN_EMAIL=truenas_admin@example.com
+      - ADMIN_USERNAME=truenas_admin
+      - ADMIN_PASSWORD=123456
       - DB_BACKEND=postgresql
-      - DB_NAME=${dbName}
-      - DB_USER=${dbUser}
-      - DB_PASS=${dbPass}
-      - DB_HOST=${dbHost}
+      - DB_NAME=librephotos
+      - DB_USER=docker
+      - DB_PASS=AaAa1234
+      - DB_HOST=db
       - DB_PORT=5432
-      - MAPBOX_API_KEY=${mapApiKey:-}
-      - WEB_CONCURRENCY=${gunniWorkers:-1}
-      - BASE_LOGS=${baseLogs:-/logs}
-      - LOG_LEVEL=${logLevel:-INFO}
-      - SKIP_PATTERNS=${skipPatterns:-}
-      - ALLOW_UPLOAD=${allowUpload:-false}
-      - NEXTCLOUD_ENABLED=${nextcloudEnabled:-false}
-      - CSRF_TRUSTED_ORIGINS=${csrfTrustedOrigins:-}
-      - FEATURE_VIDEO=${featureVideo:-true}
-      - FEATURE_FACE_DETECTION=${featureFaceDetection:-true}
-      - FEATURE_FACE_CLUSTER=${featureFaceCluster:-true}
-      - FEATURE_IMAGE_CAPTIONING=${featureImageCaptioning:-true}
-      - FEATURE_REVERSE_GEOCODING=${featureReverseGeocoding:-true}
-      - FEATURE_SCENE_CLASSIFICATION=${featureSceneClassification:-true}
+      - WEB_CONCURRENCY=2
+      - ALLOW_UPLOAD=true
+      - FEATURE_VIDEO=true
+      - FEATURE_FACE_DETECTION=true
+      - FEATURE_FACE_CLUSTER=true
+      - FEATURE_IMAGE_CAPTIONING=true
+      - FEATURE_REVERSE_GEOCODING=true
+      - FEATURE_SCENE_CLASSIFICATION=true
       - SERVE_FRONTEND=true
+      - HEAVYWEIGHT_PROCESS=1
       - DEBUG=0
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/openblas-pthread
     depends_on:
       db:
-        condition: service_healthy 
+        condition: service_healthy
