@@ -190,13 +190,13 @@ def _with_photo_summary_relations(queryset):
 
 
 def _get_active_tag_thing_types():
-    """Return the AlbumThing thing_type values for the active tagging model."""
-    from constance import config as site_config
-
-    tagging_model = site_config.TAGGING_MODEL
-    if tagging_model == "siglip2":
-        return ["siglip2_tag"]
-    return ["places365_attribute", "places365_category"]
+    """Return current and legacy generated-tag AlbumThing types."""
+    return [
+        "caption_generator_tag",
+        "siglip2_tag",
+        "places365_attribute",
+        "places365_category",
+    ]
 
 
 class AlbumThingViewSet(viewsets.ModelViewSet):

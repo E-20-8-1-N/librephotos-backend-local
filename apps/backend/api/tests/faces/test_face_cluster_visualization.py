@@ -14,6 +14,7 @@ called out in a comment so the refactorer knows the behaviour is intentional
 from unittest.mock import patch
 
 import numpy as np
+from django.db.models.query import QuerySet
 from django.test import TestCase
 
 from api.face_classify import cluster_faces
@@ -235,8 +236,8 @@ class ClusterFacesPcaConstraintTest(TestCase):
         self.assertEqual(len(result["data"]), 3)
 
 
-class ClusterFacesPaginationTest(TestCase):
-    """Faces are read through a Paginator; every page must be consumed."""
+class ClusterFacesIteratorTest(TestCase):
+    """Faces are streamed through QuerySet.iterator; every face is consumed."""
 
     def setUp(self):
         self.user = create_test_user()
@@ -244,14 +245,12 @@ class ClusterFacesPaginationTest(TestCase):
         for i in range(6):
             create_test_face(photo=self.photo, encoding=enc_hex(i + 80))
 
-    def test_all_pages_are_walked(self):
-        with patch("api.face_classify.Paginator") as paginator_cls:
-            from django.core.paginator import Paginator as RealPaginator
-
-            paginator_cls.side_effect = lambda qs, per_page: RealPaginator(qs, 2)
+    def test_all_faces_are_streamed(self):
+        real_iterator = QuerySet.iterator
+        with patch.object(
+            QuerySet, "iterator", autospec=True, side_effect=real_iterator
+        ) as iterator_mock:
             with patch("api.face_classify.PCA", FakePCA):
                 result = cluster_faces(self.user)
         self.assertEqual(len(result["data"]), 6)
-        paginator_cls.assert_called_once()
-        # Page size used by the production code path.
-        self.assertEqual(paginator_cls.call_args[0][1], 5000)
+        iterator_mock.assert_called_once()

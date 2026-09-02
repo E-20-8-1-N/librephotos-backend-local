@@ -314,7 +314,7 @@ CONSTANCE_CONFIG = {
         str,
     ),
     "MAP_API_PROVIDER": (
-        os.environ.get("MAP_API_PROVIDER", "photon"),
+        os.environ.get("MAP_API_PROVIDER", "nominatim"),
         "Map Provider",
         "map_api_provider",
     ),
@@ -325,8 +325,8 @@ CONSTANCE_CONFIG = {
         "map_tile_provider",
     ),
     "IMAGE_DIRS": ("/data", "Image dirs list (serialized json)", str),
-    "CAPTIONING_MODEL": ("moondream", "Captioning model", "captioning_model"),
-    "LLM_MODEL": ("moondream", "Large Language Model", "llm_model"),
+    "CAPTIONING_MODEL": ("im2txt", "Captioning model", "captioning_model"),
+    "LLM_MODEL": ("None", "Large Language Model", "llm_model"),
     "TAGGING_MODEL": ("places365", "Tagging model", "tagging_model"),
     "OCR_MODEL": (
         "None",
@@ -427,8 +427,10 @@ MIDDLEWARE = [
     "allauth.account.middleware.AccountMiddleware",
 ]
 
-# PAM and allauth add their authentication backends alongside the default
-# ModelBackend so that regular username/password login keeps working.
+# PAM and allauth add their authentication backend alongside the default ModelBackend so
+# that regular username/password login keeps working (hybrid login — the
+# maintainer's call on #401). ModelBackend stays first so password auth is
+# unaffected.
 AUTHENTICATION_BACKENDS = [
     "django_pam.auth.backends.PAMBackend",
     "django.contrib.auth.backends.ModelBackend",

@@ -1,47 +1,18 @@
-"""Characterization tests for ``SemanticSearch.calculate_clip_embeddings``.
+"""Tests for ``SemanticSearch.calculate_clip_embeddings``.
 
-Target: ``service/clip_embeddings/semantic_search/semantic_search.py``.
-
-No real model is ever loaded: ``SentenceTransformer`` is patched in the
-module namespace and ``PIL.Image.open`` is patched, so nothing touches the
-network, the filesystem or a GPU.  Real (CPU) ``torch`` tensors are used as
-the fake encoder output because the production code calls ``.cpu()``,
-``.numpy()``, ``.tolist()`` and iterates over the result.
-
-Quirks pinned here that a refactor must preserve:
-  * The model is loaded lazily and ONLY when ``model_is_loaded`` is falsy;
-    ``load()`` sets the flag even though nothing verifies the load worked.
-  * The branch that decides "batch" vs "single" is ``type(x) is list`` --
-    an exact type check.  A tuple, a ``PosixPath``, a ``str`` or even a
-    ``list`` subclass all take the *single image* path.
-  * ``PIL.UnidentifiedImageError`` is swallowed per image (with a ``print``)
-    -- a bad image in a batch is silently dropped, so the returned
-    embeddings can be SHORTER than ``img_paths`` and there is no way for the
-    caller to tell which path failed.
-  * Any OTHER exception from ``PIL.Image.open`` (e.g. ``FileNotFoundError``)
-    is NOT caught and propagates out of the method un-printed.
-  * ``encode`` is always called with ``batch_size=32`` and
-    ``convert_to_tensor=True``, even for a single image.
-  * CPU + list returns a lazy ``map`` object for the magnitudes (NOT a
-    list); CUDA + list returns a real ``list`` of numpy floats.  Callers
-    that iterate twice, take ``len()`` or index the magnitudes work only in
-    the CUDA case.
-  * The single-image branch returns a plain Python ``list`` for the
-    embedding, the list branch returns the raw tensor.
-  * Every exception raised inside the ``try`` (including an ``IndexError``
-    from ``imgs_emb[0]`` when every image failed to open) is printed and
-    re-raised unchanged.
+The encoder and Pillow opener are mocked, while real CPU tensors exercise the
+Torch-to-NumPy conversion used for both CPU and CUDA model output.
 """
 
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 import PIL.Image
 import torch
-from django.test import TestCase
+from django.test import SimpleTestCase
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
@@ -56,76 +27,77 @@ def make_embeddings(rows):
     return torch.tensor(rows, dtype=torch.float32)
 
 
-class CalculateClipEmbeddingsTestCase(TestCase):
-    """Behavior of ``SemanticSearch.calculate_clip_embeddings``."""
-
+class CalculateClipEmbeddingsTestCase(SimpleTestCase):
     def setUp(self):
         self.search = SemanticSearch()
         self.model = MagicMock()
-        # Default: two 2-d embeddings with easy norms (5.0 and 10.0).
         self.model.encode.return_value = make_embeddings([[3.0, 4.0], [6.0, 8.0]])
         self.search.model = self.model
         self.search.model_is_loaded = True
 
-    # ------------------------------------------------------------------
-    # model loading branch
-    # ------------------------------------------------------------------
-
     def test_model_is_loaded_lazily_when_flag_is_false(self):
         search = SemanticSearch()
-        self.assertFalse(search.model_is_loaded)
+        search.model_is_loaded = False
         fake_model = MagicMock()
         fake_model.encode.return_value = make_embeddings([[3.0, 4.0]])
+        image = MagicMock(name="image")
 
-        with patch(f"{MODULE}.SentenceTransformer", return_value=fake_model) as st:
-            with patch("PIL.Image.open", return_value=MagicMock()):
+        with patch(f"{MODULE}.SentenceTransformer", return_value=fake_model) as loader:
+            with patch("PIL.Image.open", return_value=image):
                 search.calculate_clip_embeddings("/photo.jpg", "clip-model-name")
 
-        st.assert_called_once_with("clip-model-name")
+        loader.assert_called_once_with("clip-model-name")
         self.assertIs(search.model, fake_model)
         self.assertTrue(search.model_is_loaded)
+        image.load.assert_called_once_with()
+        image.close.assert_called_once_with()
 
     def test_model_is_not_reloaded_when_already_loaded(self):
-        with patch(f"{MODULE}.SentenceTransformer") as st:
-            with patch("PIL.Image.open", return_value=MagicMock()):
+        image = MagicMock(name="image")
+        with patch(f"{MODULE}.SentenceTransformer") as loader:
+            with patch("PIL.Image.open", return_value=image):
                 self.search.calculate_clip_embeddings("/photo.jpg", "unused-model")
 
-        st.assert_not_called()
+        loader.assert_not_called()
         self.assertIs(self.search.model, self.model)
 
-    # ------------------------------------------------------------------
-    # CPU happy paths
-    # ------------------------------------------------------------------
-
-    def test_list_input_on_cpu_returns_tensor_and_lazy_map_of_magnitudes(self):
-        img_a, img_b = MagicMock(name="a"), MagicMock(name="b")
-        with patch("PIL.Image.open", side_effect=[img_a, img_b]):
+    def test_list_input_on_cpu_returns_numpy_rows_and_reusable_lists(self):
+        image_a = MagicMock(name="image_a")
+        image_b = MagicMock(name="image_b")
+        with patch("PIL.Image.open", side_effect=[image_a, image_b]):
             with patch("torch.cuda.is_available", return_value=False):
-                embeddings, magnitudes = self.search.calculate_clip_embeddings(
-                    ["/a.jpg", "/b.jpg"], "m"
-                )
+                with patch("torch.cuda.empty_cache") as empty_cache:
+                    embeddings, magnitudes = self.search.calculate_clip_embeddings(
+                        ["/a.jpg", "/b.jpg"], "m"
+                    )
 
-        # the encoder gets the opened PIL objects, in order
         self.model.encode.assert_called_once_with(
-            [img_a, img_b], batch_size=32, convert_to_tensor=True
+            [image_a, image_b], batch_size=16, convert_to_tensor=True
         )
-        self.assertIsInstance(embeddings, torch.Tensor)
-        self.assertEqual(embeddings.tolist(), [[3.0, 4.0], [6.0, 8.0]])
-        # QUIRK: a lazy map object, not a list -- no len(), single use only
-        self.assertIsInstance(magnitudes, map)
-        self.assertEqual([float(m) for m in magnitudes], [5.0, 10.0])
+        self.assertIsInstance(embeddings, list)
+        self.assertTrue(all(type(row) is np.ndarray for row in embeddings))
+        self.assertEqual([row.tolist() for row in embeddings], [[3.0, 4.0], [6.0, 8.0]])
+        self.assertIsInstance(magnitudes, list)
+        self.assertTrue(all(type(value) is float for value in magnitudes))
+        self.assertEqual(magnitudes, [5.0, 10.0])
+        self.assertEqual(
+            [row.tolist() for row in embeddings],
+            [
+                [3.0, 4.0],
+                [6.0, 8.0],
+            ],
+        )
+        self.assertEqual(list(magnitudes), [5.0, 10.0])
+        self.assertEqual(list(magnitudes), [5.0, 10.0])
+        image_a.load.assert_called_once_with()
+        image_b.load.assert_called_once_with()
+        image_a.close.assert_called_once_with()
+        image_b.close.assert_called_once_with()
+        empty_cache.assert_not_called()
 
-    def test_cpu_list_magnitudes_map_is_exhausted_after_one_iteration(self):
-        with patch("PIL.Image.open", return_value=MagicMock()):
-            with patch("torch.cuda.is_available", return_value=False):
-                _, magnitudes = self.search.calculate_clip_embeddings(["/a.jpg"], "m")
-
-        self.assertEqual(len(list(magnitudes)), 2)
-        self.assertEqual(list(magnitudes), [])
-
-    def test_single_path_on_cpu_returns_plain_list_and_float_magnitude(self):
-        img = MagicMock()
-        with patch("PIL.Image.open", return_value=img) as opener:
+    def test_single_path_on_cpu_returns_plain_lists_and_float(self):
+        image = MagicMock(name="image")
+        with patch("PIL.Image.open", return_value=image) as opener:
             with patch("torch.cuda.is_available", return_value=False):
                 embedding, magnitude = self.search.calculate_clip_embeddings(
                     "/only.jpg", "m"
@@ -133,93 +105,113 @@ class CalculateClipEmbeddingsTestCase(TestCase):
 
         opener.assert_called_once_with("/only.jpg")
         self.model.encode.assert_called_once_with(
-            [img], batch_size=32, convert_to_tensor=True
+            [image], batch_size=16, convert_to_tensor=True
         )
         self.assertIsInstance(embedding, list)
         self.assertEqual(embedding, [3.0, 4.0])
-        # only the FIRST row of the encoder output is used
-        self.assertAlmostEqual(float(magnitude), 5.0)
-        self.assertIsInstance(magnitude, np.floating)
+        self.assertIs(type(magnitude), float)
+        self.assertEqual(magnitude, 5.0)
 
-    def test_tuple_input_is_treated_as_a_single_path(self):
-        """``type(x) is list`` is exact -- a tuple is handed to PIL as-is."""
-        paths = ("/a.jpg", "/b.jpg")
-        with patch("PIL.Image.open", return_value=MagicMock()) as opener:
-            with patch("torch.cuda.is_available", return_value=False):
-                embedding, _ = self.search.calculate_clip_embeddings(paths, "m")
-
-        opener.assert_called_once_with(paths)
-        self.assertEqual(embedding, [3.0, 4.0])
-
-    def test_list_subclass_is_treated_as_a_single_path(self):
+    def test_list_subclass_is_treated_as_a_batch(self):
         class PathList(list):
             pass
 
-        paths = PathList(["/a.jpg"])
-        with patch("PIL.Image.open", return_value=MagicMock()) as opener:
+        paths = PathList(["/a.jpg", "/b.jpg"])
+        image_a = MagicMock(name="image_a")
+        image_b = MagicMock(name="image_b")
+        with patch("PIL.Image.open", side_effect=[image_a, image_b]) as opener:
             with patch("torch.cuda.is_available", return_value=False):
-                self.search.calculate_clip_embeddings(paths, "m")
+                embeddings, magnitudes = self.search.calculate_clip_embeddings(
+                    paths, "m"
+                )
+
+        self.assertEqual(opener.call_args_list, [call("/a.jpg"), call("/b.jpg")])
+        self.model.encode.assert_called_once_with(
+            [image_a, image_b], batch_size=16, convert_to_tensor=True
+        )
+        self.assertIsInstance(embeddings, list)
+        self.assertTrue(all(isinstance(row, np.ndarray) for row in embeddings))
+        self.assertEqual(magnitudes, [5.0, 10.0])
+
+    def test_tuple_input_remains_a_single_pillow_path(self):
+        paths = ("/a.jpg", "/b.jpg")
+        image = MagicMock(name="image")
+        with patch("PIL.Image.open", return_value=image) as opener:
+            with patch("torch.cuda.is_available", return_value=False):
+                embedding, magnitude = self.search.calculate_clip_embeddings(paths, "m")
 
         opener.assert_called_once_with(paths)
+        self.model.encode.assert_called_once_with(
+            [image], batch_size=16, convert_to_tensor=True
+        )
+        self.assertEqual(embedding, [3.0, 4.0])
+        self.assertEqual(magnitude, 5.0)
 
     def test_pathlib_path_is_treated_as_a_single_path(self):
-        p = Path("/tmp/pic.jpg")
-        with patch("PIL.Image.open", return_value=MagicMock()) as opener:
+        path = Path("/tmp/pic.jpg")
+        image = MagicMock(name="image")
+        with patch("PIL.Image.open", return_value=image) as opener:
             with patch("torch.cuda.is_available", return_value=False):
-                embedding, _ = self.search.calculate_clip_embeddings(p, "m")
+                embedding, _ = self.search.calculate_clip_embeddings(path, "m")
 
-        opener.assert_called_once_with(p)
+        opener.assert_called_once_with(path)
         self.assertEqual(embedding, [3.0, 4.0])
 
-    # ------------------------------------------------------------------
-    # CUDA happy paths
-    # ------------------------------------------------------------------
-
-    def test_list_input_on_cuda_returns_materialised_list_of_magnitudes(self):
-        with patch("PIL.Image.open", return_value=MagicMock()):
+    def test_cuda_batch_has_the_same_public_types_as_cpu(self):
+        image_a = MagicMock(name="image_a")
+        image_b = MagicMock(name="image_b")
+        with patch("PIL.Image.open", side_effect=[image_a, image_b]):
             with patch("torch.cuda.is_available", return_value=True):
-                embeddings, magnitudes = self.search.calculate_clip_embeddings(
-                    ["/a.jpg", "/b.jpg"], "m"
-                )
+                with patch("torch.cuda.empty_cache") as empty_cache:
+                    embeddings, magnitudes = self.search.calculate_clip_embeddings(
+                        ["/a.jpg", "/b.jpg"], "m"
+                    )
 
-        self.assertIsInstance(embeddings, torch.Tensor)
-        # QUIRK: a real list here, unlike the CPU branch
+        self.assertIsInstance(embeddings, list)
+        self.assertTrue(all(type(row) is np.ndarray for row in embeddings))
+        self.assertEqual([row.tolist() for row in embeddings], [[3.0, 4.0], [6.0, 8.0]])
         self.assertIsInstance(magnitudes, list)
-        self.assertEqual([float(m) for m in magnitudes], [5.0, 10.0])
+        self.assertTrue(all(type(value) is float for value in magnitudes))
+        self.assertEqual(magnitudes, [5.0, 10.0])
+        empty_cache.assert_called_once_with()
 
-    def test_single_path_on_cuda_returns_plain_list_and_float_magnitude(self):
-        with patch("PIL.Image.open", return_value=MagicMock()):
+    def test_cuda_single_has_the_same_public_types_as_cpu(self):
+        image = MagicMock(name="image")
+        with patch("PIL.Image.open", return_value=image):
             with patch("torch.cuda.is_available", return_value=True):
-                embedding, magnitude = self.search.calculate_clip_embeddings(
-                    "/only.jpg", "m"
-                )
+                with patch("torch.cuda.empty_cache") as empty_cache:
+                    embedding, magnitude = self.search.calculate_clip_embeddings(
+                        "/only.jpg", "m"
+                    )
 
         self.assertIsInstance(embedding, list)
         self.assertEqual(embedding, [3.0, 4.0])
-        self.assertAlmostEqual(float(magnitude), 5.0)
-
-    # ------------------------------------------------------------------
-    # unreadable images
-    # ------------------------------------------------------------------
+        self.assertIs(type(magnitude), float)
+        self.assertEqual(magnitude, 5.0)
+        empty_cache.assert_called_once_with()
 
     def test_unidentified_image_in_a_batch_is_skipped_and_printed(self):
         good = MagicMock(name="good")
+        self.model.encode.return_value = make_embeddings([[3.0, 4.0]])
         with patch(
             "PIL.Image.open",
             side_effect=[good, PIL.UnidentifiedImageError("nope")],
         ):
             with patch("builtins.print") as printer:
                 with patch("torch.cuda.is_available", return_value=False):
-                    self.search.calculate_clip_embeddings(["/ok.jpg", "/bad.jpg"], "m")
+                    embeddings, magnitudes = self.search.calculate_clip_embeddings(
+                        ["/ok.jpg", "/bad.jpg"], "m"
+                    )
 
-        # the broken image never reaches the encoder
         self.model.encode.assert_called_once_with(
-            [good], batch_size=32, convert_to_tensor=True
+            [good], batch_size=16, convert_to_tensor=True
         )
-        printer.assert_any_call("Error loading image: /bad.jpg")
+        self.assertEqual([row.tolist() for row in embeddings], [[3.0, 4.0]])
+        self.assertEqual(magnitudes, [5.0])
+        printer.assert_called_once_with("Error loading image: /bad.jpg")
+        good.close.assert_called_once_with()
 
-    def test_unidentified_single_image_still_calls_encode_with_empty_list(self):
-        """Every image failed -> ``imgs_emb[0]`` raises and is re-raised."""
+    def test_unidentified_single_image_encodes_empty_list_then_reraises(self):
         self.model.encode.return_value = make_embeddings([]).reshape(0, 2)
         with patch("PIL.Image.open", side_effect=PIL.UnidentifiedImageError("nope")):
             with patch("builtins.print") as printer:
@@ -228,11 +220,19 @@ class CalculateClipEmbeddingsTestCase(TestCase):
                         self.search.calculate_clip_embeddings("/bad.jpg", "m")
 
         self.model.encode.assert_called_once_with(
-            [], batch_size=32, convert_to_tensor=True
+            [], batch_size=16, convert_to_tensor=True
         )
-        printer.assert_any_call("Error loading image: /bad.jpg")
+        self.assertEqual(
+            printer.call_args_list,
+            [
+                call("Error loading image: /bad.jpg"),
+                call(
+                    "Error in calculating clip embeddings: index 0 is out of bounds for axis 0 with size 0"
+                ),
+            ],
+        )
 
-    def test_empty_list_input_encodes_nothing_and_returns_empty_results(self):
+    def test_empty_list_returns_two_empty_reusable_lists(self):
         self.model.encode.return_value = make_embeddings([]).reshape(0, 2)
         with patch("PIL.Image.open") as opener:
             with patch("torch.cuda.is_available", return_value=False):
@@ -240,32 +240,81 @@ class CalculateClipEmbeddingsTestCase(TestCase):
 
         opener.assert_not_called()
         self.model.encode.assert_called_once_with(
-            [], batch_size=32, convert_to_tensor=True
+            [], batch_size=16, convert_to_tensor=True
         )
+        self.assertEqual(embeddings, [])
+        self.assertEqual(magnitudes, [])
         self.assertEqual(list(embeddings), [])
         self.assertEqual(list(magnitudes), [])
 
-    def test_non_unidentified_open_error_propagates_uncaught(self):
-        """Only ``UnidentifiedImageError`` is guarded -- OSError escapes."""
-        with patch("PIL.Image.open", side_effect=FileNotFoundError("missing")):
+    def test_non_image_format_open_error_is_reraised(self):
+        boom = FileNotFoundError("missing")
+        with patch("PIL.Image.open", side_effect=boom):
             with patch("builtins.print") as printer:
-                with self.assertRaises(FileNotFoundError):
+                with self.assertRaises(FileNotFoundError) as context:
                     self.search.calculate_clip_embeddings(["/gone.jpg"], "m")
 
+        self.assertIs(context.exception, boom)
         self.model.encode.assert_not_called()
-        printer.assert_not_called()
+        printer.assert_called_once_with("Error loading image /gone.jpg: missing")
 
-    # ------------------------------------------------------------------
-    # encoder failures
-    # ------------------------------------------------------------------
+    def test_open_error_closes_current_and_previously_loaded_images(self):
+        good = MagicMock(name="good")
+        broken = MagicMock(name="broken")
+        boom = OSError("decode failed")
+        broken.load.side_effect = boom
 
-    def test_encode_failure_is_printed_and_re_raised_unchanged(self):
+        with patch("PIL.Image.open", side_effect=[good, broken]):
+            with patch("builtins.print") as printer:
+                with self.assertRaises(OSError) as context:
+                    self.search.calculate_clip_embeddings(
+                        ["/good.jpg", "/broken.jpg"], "m"
+                    )
+
+        self.assertIs(context.exception, boom)
+        good.load.assert_called_once_with()
+        broken.load.assert_called_once_with()
+        good.close.assert_called_once_with()
+        broken.close.assert_called_once_with()
+        self.model.encode.assert_not_called()
+        printer.assert_called_once_with(
+            "Error loading image /broken.jpg: decode failed"
+        )
+
+    def test_encode_failure_is_printed_reraised_and_fully_cleaned_up(self):
+        image = MagicMock(name="image")
         boom = RuntimeError("CUDA OOM")
         self.model.encode.side_effect = boom
-        with patch("PIL.Image.open", return_value=MagicMock()):
-            with patch("builtins.print") as printer:
-                with self.assertRaises(RuntimeError) as ctx:
-                    self.search.calculate_clip_embeddings(["/a.jpg"], "m")
 
-        self.assertIs(ctx.exception, boom)
-        printer.assert_any_call("Error in calculating clip embeddings: CUDA OOM")
+        with patch("PIL.Image.open", return_value=image):
+            with patch("builtins.print") as printer:
+                with patch(f"{MODULE}.gc.collect") as collect:
+                    with patch("torch.cuda.is_available", return_value=True):
+                        with patch("torch.cuda.empty_cache") as empty_cache:
+                            with self.assertRaises(RuntimeError) as context:
+                                self.search.calculate_clip_embeddings(["/a.jpg"], "m")
+
+        self.assertIs(context.exception, boom)
+        self.model.encode.assert_called_once_with(
+            [image], batch_size=16, convert_to_tensor=True
+        )
+        image.close.assert_called_once_with()
+        collect.assert_called_once_with()
+        empty_cache.assert_called_once_with()
+        printer.assert_called_once_with(
+            "Error in calculating clip embeddings: CUDA OOM"
+        )
+
+    def test_close_failure_does_not_skip_remaining_cleanup(self):
+        image_a = MagicMock(name="image_a")
+        image_b = MagicMock(name="image_b")
+        image_a.close.side_effect = OSError("close failed")
+
+        with patch("PIL.Image.open", side_effect=[image_a, image_b]):
+            with patch(f"{MODULE}.gc.collect") as collect:
+                with patch("torch.cuda.is_available", return_value=False):
+                    self.search.calculate_clip_embeddings(["/a.jpg", "/b.jpg"], "m")
+
+        image_a.close.assert_called_once_with()
+        image_b.close.assert_called_once_with()
+        collect.assert_called_once_with()

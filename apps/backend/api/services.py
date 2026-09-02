@@ -32,32 +32,19 @@ SERVICES = {
     "thumbnail": 8003,
     "face_recognition": 8005,
     "clip_embeddings": 8006,
-    # "llm": 8008,
-    # "image_captioning": 8007,
     "exif": 8010,
-    # "tags": 8011,
     "ocr": 8012,
 }
 
 HTTP_OK = 200
 
 # The feature flag each service serves; None means core scan/search, always on.
-#
-# llm is gated on captioning because captioning is its only consumer: port 8008
-# is reached from api.llm.generate_prompt and the Moondream branch of
-# api.image_captioning.generate_caption, and both are called only from
-# PhotoCaption's caption generation, which already stops when
-# FEATURE_IMAGE_CAPTIONING is off. If anything else ever calls generate_prompt
-# — chat, cluster naming — this has to go back to None.
 SERVICE_FEATURE_FLAGS = {
     "image_similarity": None,
     "thumbnail": None,
     "face_recognition": "FEATURE_FACE_DETECTION",
     "clip_embeddings": None,
-    "llm": "FEATURE_IMAGE_CAPTIONING",
-    "image_captioning": "FEATURE_IMAGE_CAPTIONING",
     "exif": None,
-    "tags": "FEATURE_SCENE_CLASSIFICATION",
     "ocr": None,
 }
 
@@ -138,9 +125,7 @@ def is_healthy(service):
     try:
         from api.http_timeouts import HEALTH_CHECK
 
-        res = requests.get(
-            f"http://{BACKEND_HOST}:{port}/health", timeout=HEALTH_CHECK
-        )
+        res = requests.get(f"http://{BACKEND_HOST}:{port}/health", timeout=HEALTH_CHECK)
         # If response has timestamp, check if it needs to be restarted
         if res.json().get("last_request_time") is not None:
             if res.json()["last_request_time"] < time.time() - 120:

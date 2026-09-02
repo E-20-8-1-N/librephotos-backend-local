@@ -63,7 +63,7 @@ fi
 # Check if we should serve frontend
 if echo "$SERVE_FRONTEND" | grep -qiE '^(true|1|yes|on)$'; then
     echo "Configuring for no-proxy deployment (serving frontend from Django)..."
-    
+
     # Select the no-proxy settings module. It imports librephotos.settings.
     # production and overrides only what serving the frontend from Django
     # changes; this used to be a `cp` of a second, hand-maintained copy of
@@ -72,7 +72,7 @@ if echo "$SERVE_FRONTEND" | grep -qiE '^(true|1|yes|on)$'; then
     # wins for every python invocation below, for gunicorn, and for the ML
     # services those spawn.
     export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-librephotos.settings.production_noproxy}"
-    
+
     # Collect static files including frontend
     echo "Collecting static files..."
     python manage.py collectstatic --noinput
@@ -88,15 +88,15 @@ DB_BACKEND=${DB_BACKEND:-sqlite}
 
 run_migrations() {
     set +e
-    python manage.py migrate 2>&1 | tee /logs/command_migrate.log
+    python manage.py migrate 2>&1 | tee "$logs_dir/command_migrate.log"
     migrate_status=${PIPESTATUS[0]}
     set -e
 
     if [ "$migrate_status" -ne 0 ]; then
-        if grep -qi "Conflicting migrations detected" /logs/command_migrate.log; then
+        if grep -qi "Conflicting migrations detected" "$logs_dir/command_migrate.log"; then
             echo "Conflicting migrations detected. Attempting auto-merge..."
-            python manage.py makemigrations --merge --noinput 2>&1 | tee /logs/command_makemigrations_merge.log
-            python manage.py migrate 2>&1 | tee /logs/command_migrate_retry.log
+            python manage.py makemigrations --merge --noinput 2>&1 | tee "$logs_dir/command_makemigrations_merge.log"
+            python manage.py migrate 2>&1 | tee "$logs_dir/command_migrate_retry.log"
         else
             echo "Migration failed for another reason."
             exit "$migrate_status"
@@ -108,16 +108,16 @@ if [ "$DB_BACKEND" = "sqlite" ]; then
     echo "Using production-optimized SQLite database mode"
     # Ensure database directory exists
     mkdir -p /data/db
-    # Run migrations for both default and cache databases
+    # Run migrations
     run_migrations
-    
+
 elif [ "$DB_BACKEND" = "postgresql" ]; then
     echo "Using PostgreSQL database mode"
-    
-    python manage.py showmigrations | tee /logs/show_migrate.log
+
+    python manage.py showmigrations | tee "$logs_dir/show_migrate.log"
     # Run standard migrations
     run_migrations
-    python manage.py showmigrations | tee /logs/show_migrate.log
+    python manage.py showmigrations | tee "$logs_dir/show_migrate.log"
 else
     echo "Error: Unsupported DB_BACKEND: $DB_BACKEND"
     echo "Supported values: sqlite, postgresql"
@@ -156,11 +156,11 @@ echo "Starting Django server..."
 python manage.py start_service all
 python manage.py start_cleaning_service
 python manage.py start_job_cleanup_service
-python manage.py clear_cache 
+python manage.py clear_cache
 python manage.py build_similarity_index 2>&1 | tee "$logs_dir/command_build_similarity_index.log"
 
 if [[ -n "$ADMIN_USERNAME" ]]; then
-    python manage.py createadmin -u "$ADMIN_USERNAME" "$ADMIN_EMAIL" 2>&1 | tee /logs/command_createadmin.log
+    python manage.py createadmin -u "$ADMIN_USERNAME" "$ADMIN_EMAIL" 2>&1 | tee "$logs_dir/command_createadmin.log"
 fi
 
 echo "Running backend server..."
@@ -174,5 +174,5 @@ if [ "$DEBUG" = "1" ]; then
     python manage.py runserver 0.0.0.0:8001
 else
     # Production server with gunicorn
-    gunicorn --bind 0.0.0.0:8001 --worker-class=gevent --workers=$GUNICORN_WORKERS --timeout 3600 --max-requests 2000 --max-requests-jitter 50 --log-level=info librephotos.wsgi:application 2>&1 | tee /logs/gunicorn_django.log
-fi 
+    gunicorn --bind 0.0.0.0:8001 --worker-class=gevent --workers=$GUNICORN_WORKERS --timeout 3600 --max-requests 2000 --max-requests-jitter 50 --log-level=info librephotos.wsgi:application 2>&1 | tee "$logs_dir/gunicorn_django.log"
+fi

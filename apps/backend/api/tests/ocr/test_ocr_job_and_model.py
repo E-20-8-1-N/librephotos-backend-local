@@ -136,7 +136,9 @@ class OcrImageSourceHelperTest(TestCase):
     def test_raw_original_falls_back_to_thumbnail(self):
         photo = create_test_photo(owner=self.user)
         raw_path = f"/tmp/{photo.image_hash}.CR2"
-        raw_file = create_test_file(raw_path, self.user, ONE_PIXEL_PNG + photo.pk.bytes)
+        raw_file = create_test_file(
+            raw_path, self.user, ONE_PIXEL_PNG + photo.pk.bytes + b"-raw"
+        )
         photo.main_file = raw_file
         photo.save()
 

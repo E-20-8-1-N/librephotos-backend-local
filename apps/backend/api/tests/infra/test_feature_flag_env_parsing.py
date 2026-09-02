@@ -19,7 +19,9 @@ from django.test import SimpleTestCase
 from librephotos.settings import production
 
 BACKEND_DIR = Path(__file__).resolve().parents[3]
-REPO_ROOT = BACKEND_DIR.parents[1]
+REPO_ROOT = (
+    BACKEND_DIR.parent.parent if BACKEND_DIR.parent.name == "apps" else BACKEND_DIR
+)
 COMPOSE_DIR = REPO_ROOT / "deploy" / "compose"
 
 

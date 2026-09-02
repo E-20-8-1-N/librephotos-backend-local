@@ -28,6 +28,7 @@ from django.test import RequestFactory, TestCase
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
+from api.models import User
 from api.tests.utils import create_test_user
 from api.views.upload import (
     UploadPhotosChunked,
@@ -194,8 +195,8 @@ class CheckPermissionsTest(TestCase):
     def test_scan_directory_is_not_validated_here(self):
         # Quirk: an unusable scan_directory only surfaces later, in
         # on_completion, after the whole file has been uploaded.
-        self.user.scan_directory = ""
-        self.user.save()
+        User.objects.filter(pk=self.user.pk).update(scan_directory="")
+        self.user.refresh_from_db()
 
         self.assertIsNone(
             self.view.check_permissions(make_request(jwt=token_for(self.user)))
@@ -316,7 +317,9 @@ class ErrorHelperTest(TestCase):
     def test_validate_scan_directory_is_not_part_of_the_permission_gate(self):
         # Guards against a refactor that folds this check into
         # check_permissions: today it is only called from on_completion.
-        user = create_test_user(scan_directory="")
+        user = create_test_user()
+        User.objects.filter(pk=user.pk).update(scan_directory="")
+        user.refresh_from_db()
 
         with self.assertRaises(ChunkedUploadError) as ctx:
             validate_scan_directory(user)

@@ -243,6 +243,8 @@ class AddToAlbumThingCharacterizationTest(TestCase):
 class RotateCharacterizationTest(TestCase):
     def setUp(self):
         self.user = create_test_user()
+        self.user.save_metadata_to_disk = User.SaveMetadata.OFF
+        self.user.save(update_fields=["save_metadata_to_disk"])
         self.photo = create_test_photo(owner=self.user)
 
     # ---- validation / early exit --------------------------------------
@@ -309,7 +311,7 @@ class RotateCharacterizationTest(TestCase):
     @patch("api.models.thumbnail.Thumbnail._regenerate_thumbnails")
     def test_90_with_flip(self, regen):
         self.photo.rotate(90, flip_horizontal=True)
-        self.assertEqual(self.photo.local_orientation, 7)
+        self.assertEqual(self.photo.local_orientation, 5)
 
     # ---- metadata-to-disk branch --------------------------------------
 

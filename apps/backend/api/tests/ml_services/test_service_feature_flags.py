@@ -1,8 +1,8 @@
 """The FEATURE_* switches decide which ML services are spawned and watched.
 
-Without this, a deployment that turned face detection or captioning off still
-paid for every model: `start_service all` spawned all nine sidecars and the
-per-minute watchdog restarted any that were killed to reclaim the memory.
+Without this, a deployment that turned face detection off still paid for its
+model: `start_service all` spawned the sidecar and the per-minute watchdog
+restarted it when it was killed to reclaim the memory.
 """
 
 from unittest.mock import patch
@@ -63,16 +63,6 @@ class ServiceFeatureFlagMappingTest(SimpleTestCase):
         self.assertFalse(is_service_enabled("face_recognition"))
         self.assertTrue(is_service_enabled("thumbnail"))
 
-    @override_settings(FEATURE_SCENE_CLASSIFICATION=False)
-    def test_tags_follows_scene_classification(self):
-        self.assertFalse(is_service_enabled("tags"))
-
-    @override_settings(FEATURE_IMAGE_CAPTIONING=False)
-    def test_captioning_takes_the_llm_service_with_it(self):
-        """Port 8008 is only ever reached from the captioning code paths."""
-        self.assertFalse(is_service_enabled("image_captioning"))
-        self.assertFalse(is_service_enabled("llm"))
-
     def test_a_missing_setting_leaves_the_service_enabled(self):
         """An unrecognised switch must not take a service away."""
         with patch.dict(
@@ -98,14 +88,14 @@ class StartServiceTest(SimpleTestCase):
         self.assertTrue(start_service("thumbnail"))
         popen_mock.assert_called_once()
 
-    @override_settings(FEATURE_IMAGE_CAPTIONING=False)
+    @override_settings(FEATURE_FACE_DETECTION=False)
     def test_the_refusal_is_logged_at_info(self, popen_mock, _compatible):
         with self.assertLogs("ownphotos", level="INFO") as logs:
-            start_service("llm")
+            start_service("face_recognition")
 
         self.assertTrue(
             any(
-                "llm" in line and "FEATURE_IMAGE_CAPTIONING" in line
+                "face_recognition" in line and "FEATURE_FACE_DETECTION" in line
                 for line in logs.output
             ),
             logs.output,
@@ -131,12 +121,8 @@ class StartAllCommandTest(TestCase):
         self.assertNotIn("face_recognition", started)
         self.assertEqual(set(SERVICES) - {"face_recognition"}, started)
 
-    @override_settings(
-        FEATURE_FACE_DETECTION=False,
-        FEATURE_IMAGE_CAPTIONING=False,
-        FEATURE_SCENE_CLASSIFICATION=False,
-    )
-    def test_only_the_core_pipeline_starts_when_every_flag_is_off(
+    @override_settings(FEATURE_FACE_DETECTION=False)
+    def test_only_the_core_pipeline_starts_when_face_detection_is_off(
         self, popen_mock, _compatible
     ):
         call_command("start_service", "all")
@@ -204,7 +190,7 @@ class CheckServicesTest(SimpleTestCase):
             "face_recognition", {call.args[0] for call in healthy_mock.call_args_list}
         )
 
-    @override_settings(FEATURE_IMAGE_CAPTIONING=False)
+    @override_settings(FEATURE_FACE_DETECTION=False)
     def test_the_watchdog_stays_quiet_about_skipped_services(
         self, start_mock, stop_mock, _healthy
     ):
@@ -216,7 +202,7 @@ class CheckServicesTest(SimpleTestCase):
             [
                 line
                 for line in logs.output
-                if "FEATURE_IMAGE_CAPTIONING" in line or "'llm'" in line
+                if "FEATURE_FACE_DETECTION" in line or "face_recognition" in line
             ],
             logs.output,
         )
@@ -343,21 +329,21 @@ class ServiceAdminApiTest(TestCase):
         self.assertEqual("FEATURE_FACE_DETECTION", response.json()["feature_flag"])
         healthy_mock.assert_not_called()
 
-    @override_settings(FEATURE_IMAGE_CAPTIONING=False)
+    @override_settings(FEATURE_FACE_DETECTION=False)
     @patch("api.views.services.start_service")
     def test_starting_a_disabled_service_is_a_conflict_naming_the_flag(
         self, start_mock
     ):
-        response = self.client.post("/api/services/llm/start/")
+        response = self.client.post("/api/services/face_recognition/start/")
 
         self.assertEqual(409, response.status_code)
-        self.assertEqual("FEATURE_IMAGE_CAPTIONING", response.json()["feature_flag"])
-        self.assertIn("FEATURE_IMAGE_CAPTIONING", response.json()["error"])
+        self.assertEqual("FEATURE_FACE_DETECTION", response.json()["feature_flag"])
+        self.assertIn("FEATURE_FACE_DETECTION", response.json()["error"])
         start_mock.assert_not_called()
 
     @patch("api.views.services.start_service", return_value=True)
     def test_starting_an_enabled_service_still_succeeds(self, _start):
-        response = self.client.post("/api/services/tags/start/")
+        response = self.client.post("/api/services/thumbnail/start/")
 
         self.assertEqual(200, response.status_code)
 
@@ -366,9 +352,22 @@ class ServiceAdminApiTest(TestCase):
         self, _start
     ):
         """409 is for the switch; a genuine failure must not be dressed up as one."""
-        response = self.client.post("/api/services/tags/start/")
+        response = self.client.post("/api/services/thumbnail/start/")
 
         self.assertEqual(500, response.status_code)
+
+    @patch("api.views.services.start_service")
+    def test_removed_services_return_404_instead_of_being_started(self, start_mock):
+        for service in ("llm", "image_captioning", "tags"):
+            with self.subTest(service=service):
+                response = self.client.post(f"/api/services/{service}/start/")
+
+                self.assertEqual(404, response.status_code)
+                self.assertEqual(
+                    {"error": f"Service {service} not found"}, response.json()
+                )
+
+        start_mock.assert_not_called()
 
     @override_settings(FEATURE_FACE_DETECTION=False)
     def test_an_unknown_service_is_still_a_404(self):

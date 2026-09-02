@@ -13,7 +13,6 @@ import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
-from constance.test import override_config
 from django.test import TestCase
 from django.utils import timezone
 
@@ -36,7 +35,6 @@ class GenerateTagsCharacterizationTest(TestCase):
 
     # ---- happy path -------------------------------------------------
 
-    @override_config(TAGGING_MODEL="places365")
     def test_queues_one_async_task_per_untagged_photo(self):
         photos = [create_test_photo(owner=self.user) for _ in range(3)]
 
@@ -62,7 +60,6 @@ class GenerateTagsCharacterizationTest(TestCase):
         self.assertFalse(job.finished)
         self.assertFalse(job.failed)
 
-    @override_config(TAGGING_MODEL="places365")
     def test_no_matching_photos_completes_job_with_zero_target(self):
         with patch.object(processing_jobs, "AsyncTask") as async_task:
             generate_tags(self.user, self.job_id)
@@ -75,27 +72,23 @@ class GenerateTagsCharacterizationTest(TestCase):
         self.assertIsNotNone(job.finished_at)
         self.assertFalse(job.failed)
 
-    @override_config(TAGGING_MODEL="places365")
-    def test_photo_already_tagged_with_active_model_is_skipped(self):
+    def test_photo_already_tagged_by_caption_generator_is_skipped(self):
         create_test_photo(
-            owner=self.user, captions_json={"places365": {"attributes": []}}
+            owner=self.user, captions_json={"im2txt_tag": "outdoor"}
         )
         pending = create_test_photo(owner=self.user, captions_json={"im2txt": "a cat"})
 
         with patch.object(processing_jobs, "AsyncTask") as async_task:
             generate_tags(self.user, self.job_id)
 
-        # Only the photo missing a "places365" key is queued: a caption row
-        # for a *different* model does not count as tagged.
+        # A caption without caption-generator tags remains pending.
         self.assertEqual(async_task.call_count, 1)
         self.assertEqual(async_task.call_args.args[1].pk, pending.pk)
         self.assertEqual(_job(self.job_id).progress_target, 1)
 
-    @override_config(TAGGING_MODEL="im2txt")
-    def test_active_tagging_model_selects_which_photos_are_pending(self):
-        """Switching TAGGING_MODEL flips which photos are considered done."""
+    def test_legacy_model_tags_do_not_mark_caption_generator_complete(self):
         places = create_test_photo(owner=self.user, captions_json={"places365": {}})
-        create_test_photo(owner=self.user, captions_json={"im2txt": "a cat"})
+        create_test_photo(owner=self.user, captions_json={"im2txt_tag": "a cat"})
 
         with patch.object(processing_jobs, "AsyncTask") as async_task:
             generate_tags(self.user, self.job_id)
@@ -103,7 +96,6 @@ class GenerateTagsCharacterizationTest(TestCase):
         self.assertEqual(async_task.call_count, 1)
         self.assertEqual(async_task.call_args.args[1].pk, places.pk)
 
-    @override_config(TAGGING_MODEL="places365")
     def test_other_users_photos_are_not_touched(self):
         other = create_test_user()
         create_test_photo(owner=other)
@@ -117,7 +109,6 @@ class GenerateTagsCharacterizationTest(TestCase):
 
     # ---- incremental vs full scan -----------------------------------
 
-    @override_config(TAGGING_MODEL="places365")
     def test_incremental_scan_only_processes_photos_added_after_last_scan(self):
         now = timezone.now()
         last = LongRunningJob.create_job(
@@ -140,7 +131,6 @@ class GenerateTagsCharacterizationTest(TestCase):
         self.assertEqual(async_task.call_count, 1)
         self.assertEqual(async_task.call_args.args[1].pk, new.pk)
 
-    @override_config(TAGGING_MODEL="places365")
     def test_full_scan_ignores_last_scan_cutoff(self):
         now = timezone.now()
         last = LongRunningJob.create_job(
@@ -161,7 +151,6 @@ class GenerateTagsCharacterizationTest(TestCase):
 
         self.assertEqual(async_task.call_count, 2)
 
-    @override_config(TAGGING_MODEL="places365")
     def test_unfinished_previous_job_is_not_treated_as_last_scan(self):
         LongRunningJob.create_job(
             user=self.user,
@@ -177,7 +166,6 @@ class GenerateTagsCharacterizationTest(TestCase):
 
     # ---- cancellation / error ---------------------------------------
 
-    @override_config(TAGGING_MODEL="places365")
     def test_cancelled_job_returns_before_queuing_any_task(self):
         create_test_photo(owner=self.user)
 
@@ -195,7 +183,6 @@ class GenerateTagsCharacterizationTest(TestCase):
         self.assertFalse(job.finished)
         self.assertFalse(job.failed)
 
-    @override_config(TAGGING_MODEL="places365")
     def test_unexpected_error_marks_job_failed_and_is_swallowed(self):
         create_test_photo(owner=self.user)
 
@@ -215,7 +202,6 @@ class GenerateTagsCharacterizationTest(TestCase):
         self.assertTrue(job.finished)
         self.assertEqual(job.result, {"status": "failed", "error": "boom"})
 
-    @override_config(TAGGING_MODEL="places365")
     def test_reuses_existing_job_row_for_same_job_id(self):
         existing = LongRunningJob.create_job(
             user=self.user,

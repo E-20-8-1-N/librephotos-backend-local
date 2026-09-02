@@ -179,9 +179,9 @@ _ORIENTATION_TO_PARAMS: dict[int, tuple[int, int]] = {
     2: (0, 1),  # Flip horizontal
     3: (2, 0),  # Rotate 180°
     4: (2, 1),  # Flip vertical (= Rotate 180° + Flip H)
-    5: (3, 1),  # Rotate 270° CW + Flip H
+    5: (1, 1),  # Rotate 90° CW + Flip H
     6: (1, 0),  # Rotate 90° CW
-    7: (1, 1),  # Rotate 90° CW + Flip H
+    7: (3, 1),  # Rotate 270° CW + Flip H
     8: (3, 0),  # Rotate 270° CW (= 90° CCW)
 }
 _PARAMS_TO_ORIENTATION: dict[tuple[int, int], int] = {

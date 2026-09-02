@@ -41,7 +41,9 @@ from tempfile import TemporaryDirectory
 from django.test import SimpleTestCase
 
 BACKEND_DIR = Path(__file__).resolve().parents[3]
-REPO_ROOT = BACKEND_DIR.parents[1]
+REPO_ROOT = (
+    BACKEND_DIR.parent.parent if BACKEND_DIR.parent.name == "apps" else BACKEND_DIR
+)
 
 # Environment variables matplotlib consults when resolving its config/cache
 # directory. They are cleared so the child process starts from the same blank

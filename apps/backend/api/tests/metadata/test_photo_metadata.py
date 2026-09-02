@@ -20,7 +20,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from api.models.photo_metadata import MetadataEdit, MetadataFile, PhotoMetadata
-from api.tests.utils import create_test_photo, create_test_user
+from api.tests.utils import build_metadata_values, create_test_photo, create_test_user
 
 
 class PhotoMetadataModelTestCase(TestCase):
@@ -217,27 +217,21 @@ class PhotoMetadataModelTestCase(TestCase):
 
     def test_extract_exif_data_merges_xmp_and_iptc_keywords(self):
         """Test that extract_exif_data merges XMP:Subject and IPTC:Keywords."""
-        # Mock get_metadata to return both XMP:Subject and IPTC:Keywords
-        mock_values = [
-            100000,  # FILE_SIZE
-            2.8,  # FSTOP
-            50.0,  # FOCAL_LENGTH
-            200,  # ISO
-            0.004,  # EXPOSURE_TIME
-            "Canon EOS R5",  # CAMERA
-            "RF 50mm",  # LENS
-            6000,  # IMAGE_WIDTH
-            4000,  # IMAGE_HEIGHT
-            50,  # FOCAL_LENGTH_35MM
-            None,  # SUBJECT_DISTANCE
-            None,  # DIGITAL_ZOOM_RATIO
-            None,  # QUICKTIME_DURATION
-            5,  # RATING
-            None,  # SUBSEC_TIME_ORIGINAL
-            None,  # IMAGE_NUMBER
-            ["vacation", "beach"],  # XMP:Subject
-            ["beach", "sunset", "travel"],  # IPTC:Keywords
-        ]
+        mock_values = build_metadata_values(
+            size=100000,
+            fstop=2.8,
+            focal_length=50.0,
+            iso=200,
+            shutter_speed=0.004,
+            camera="Canon EOS R5",
+            lens="RF 50mm",
+            width=6000,
+            height=4000,
+            focal_length_35mm=50,
+            rating=5,
+            xmp_subject=["vacation", "beach"],
+            iptc_keywords=["beach", "sunset", "travel"],
+        )
 
         with patch("api.models.photo_metadata.get_metadata", return_value=mock_values):
             metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
@@ -250,26 +244,7 @@ class PhotoMetadataModelTestCase(TestCase):
 
     def test_extract_exif_data_xmp_subject_only(self):
         """Test extract_exif_data with only XMP:Subject keywords."""
-        mock_values = [
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            ["nature", "landscape"],  # XMP:Subject
-            None,  # IPTC:Keywords (not set)
-        ]
+        mock_values = build_metadata_values(xmp_subject=["nature", "landscape"])
 
         with patch("api.models.photo_metadata.get_metadata", return_value=mock_values):
             metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
@@ -279,26 +254,7 @@ class PhotoMetadataModelTestCase(TestCase):
 
     def test_extract_exif_data_iptc_keywords_only(self):
         """Test extract_exif_data with only IPTC:Keywords."""
-        mock_values = [
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,  # XMP:Subject (not set)
-            ["family", "birthday"],  # IPTC:Keywords
-        ]
+        mock_values = build_metadata_values(iptc_keywords=["family", "birthday"])
 
         with patch("api.models.photo_metadata.get_metadata", return_value=mock_values):
             metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
@@ -308,26 +264,7 @@ class PhotoMetadataModelTestCase(TestCase):
 
     def test_extract_exif_data_single_string_keyword(self):
         """Test extract_exif_data handles single string keyword (not a list)."""
-        mock_values = [
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "solo-keyword",  # XMP:Subject as a single string
-            None,  # IPTC:Keywords
-        ]
+        mock_values = build_metadata_values(xmp_subject="solo-keyword")
 
         with patch("api.models.photo_metadata.get_metadata", return_value=mock_values):
             metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
@@ -337,73 +274,50 @@ class PhotoMetadataModelTestCase(TestCase):
 
     def test_extract_exif_data_no_keywords(self):
         """Test extract_exif_data with no keywords sets None."""
-        mock_values = [
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,  # XMP:Subject
-            None,  # IPTC:Keywords
-        ]
+        mock_values = build_metadata_values()
 
         with patch("api.models.photo_metadata.get_metadata", return_value=mock_values):
             metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
 
         self.assertIsNotNone(metadata)
         self.assertIsNone(metadata.keywords)
+
     @patch("api.models.photo_metadata.get_metadata")
     def test_extract_exif_data_populates_rich_metadata(self, mock_get_metadata):
         """Test full extraction populates GPS, timestamps, and descriptive fields."""
-        mock_get_metadata.return_value = [
-            12345,
-            1.8,
-            6.765,
-            125,
-            0.02,
-            "Apple",
-            "iPhone 15 Pro Max",
-            "Apple",
-            "iPhone 15 Pro Max back triple camera 6.765mm f/1.78",
-            5712,
-            4284,
-            24,
-            None,
-            None,
-            0,
-            5,
-            "073",
-            12,
-            "2026:03:24 10:20:30",
-            None,
-            "+08:00",
-            37.3317,
-            -122.0301,
-            15.0,
-            "Shot on iPhone",
-            "Cupertino campus",
-            ["apple", "campus"],
-            None,
-            "Ethan",
-            "Copyright 2026",
-            1,
-            "sRGB",
-            8,
-            "ABC123",
-            "2026:03:24 10:21:00",
-            None,
-        ]
+        mock_get_metadata.return_value = build_metadata_values(
+            size=12345,
+            fstop=1.8,
+            focal_length=6.765,
+            iso=125,
+            shutter_speed=0.02,
+            camera_make="Apple",
+            camera="iPhone 15 Pro Max",
+            lens_make="Apple",
+            lens="iPhone 15 Pro Max back triple camera 6.765mm f/1.78",
+            width=5712,
+            height=4284,
+            focal_length_35mm=24,
+            video_length=0,
+            rating=5,
+            subsec_time_original="073",
+            image_number=12,
+            date_time_original="2026:03:24 10:20:30",
+            timezone_offset="+08:00",
+            latitude=37.3317,
+            longitude=-122.0301,
+            gps_altitude=15.0,
+            title="Shot on iPhone",
+            image_description="Cupertino campus",
+            xmp_subject=["apple", "campus"],
+            creator="Ethan",
+            copyright="Copyright 2026",
+            orientation=1,
+            color_space="sRGB",
+            bit_depth=8,
+            serial_number="ABC123",
+            file_modify_date="2026:03:24 10:21:00",
+        )
 
         metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
 
@@ -421,44 +335,38 @@ class PhotoMetadataModelTestCase(TestCase):
     @patch("api.models.photo_metadata.get_metadata")
     def test_extract_exif_data_normalizes_complex_exif_values(self, mock_get_metadata):
         """Test extraction handles dict/list/date string values from exiftool."""
-        mock_get_metadata.return_value = [
-            12345,
-            "1.8",
-            "6.765 mm",
-            "125",
-            "1/50",
-            ["Apple"],
-            {"x-default": "iPhone 15 Pro Max"},
-            None,
-            {"x-default": "iPhone lens"},
-            "5712",
-            "4284",
-            "24",
-            None,
-            None,
-            "5",
-            "5",
-            "073",
-            "12",
-            "2026:03:24 10:20:30",
-            None,
-            "+08:00",
-            "37.3317",
-            "-122.0301",
-            "15 m",
-            {"x-default": "Localized title"},
-            {"en-US": "Localized caption"},
-            {"x-default": ["apple", "campus"]},
-            None,
-            ["Ethan", "Hui"],
-            {"x-default": "Copyright 2026"},
-            "Horizontal (normal)",
-            "sRGB",
-            "8 bits",
-            ["ABC123"],
-            "2026:03:24 10:21:00-07:00",
-            None,
-        ]
+        mock_get_metadata.return_value = build_metadata_values(
+            size=12345,
+            fstop="1.8",
+            focal_length="6.765 mm",
+            iso="125",
+            shutter_speed="1/50",
+            camera_make=["Apple"],
+            camera={"x-default": "iPhone 15 Pro Max"},
+            lens={"x-default": "iPhone lens"},
+            width="5712",
+            height="4284",
+            focal_length_35mm="24",
+            video_length="5",
+            rating="5",
+            subsec_time_original="073",
+            image_number="12",
+            date_time_original="2026:03:24 10:20:30",
+            timezone_offset="+08:00",
+            latitude="37.3317",
+            longitude="-122.0301",
+            gps_altitude="15 m",
+            title={"x-default": "Localized title"},
+            image_description={"en-US": "Localized caption"},
+            xmp_subject={"x-default": ["apple", "campus"]},
+            creator=["Ethan", "Hui"],
+            copyright={"x-default": "Copyright 2026"},
+            orientation="Horizontal (normal)",
+            color_space="sRGB",
+            bit_depth="8 bits",
+            serial_number=["ABC123"],
+            file_modify_date="2026:03:24 10:21:00-07:00",
+        )
 
         metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
 
@@ -483,44 +391,15 @@ class PhotoMetadataModelTestCase(TestCase):
         self.photo.video = True
         self.photo.save(update_fields=["video"], save_metadata=False)
 
-        mock_get_metadata.return_value = [
-            12345,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            608,
-            1080,
-            None,
-            None,
-            None,
-            3.2,
-            None,
-            None,
-            None,
-            None,
-            "2026:03:30 04:26:47",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "2026:03:30 05:23:20",
-            "caption-from-macOS",
-        ]
+        mock_get_metadata.return_value = build_metadata_values(
+            size=12345,
+            width=608,
+            height=1080,
+            video_length=3.2,
+            quicktime_create_date="2026:03:30 04:26:47",
+            keys_description="caption-from-macOS",
+            file_modify_date="2026:03:30 05:23:20",
+        )
 
         metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)
 

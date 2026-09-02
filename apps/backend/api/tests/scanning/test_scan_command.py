@@ -94,6 +94,8 @@ class ScanDirectoryScanTest(ScanCommandBaseTest):
         # Current behaviour: no guard on an unconfigured scan_directory, the
         # empty string is handed straight to scan_photos.
         user = create_test_user()
+        User.objects.filter(pk=user.pk).update(scan_directory="")
+        user.refresh_from_db()
 
         with patch(f"{MODULE}.scan_photos") as scan_photos:
             self.call_scan()
@@ -188,6 +190,8 @@ class ScanFilesTest(ScanCommandBaseTest):
         # never been configured has "" as prefix, so ``startswith("")`` is
         # true for every path and the user gets every file handed to them.
         user = create_test_user()
+        User.objects.filter(pk=user.pk).update(scan_directory="")
+        user.refresh_from_db()
 
         with patch(f"{MODULE}.scan_photos") as scan_photos:
             self.call_scan("--scan-files", "/somewhere/else/a.jpg")

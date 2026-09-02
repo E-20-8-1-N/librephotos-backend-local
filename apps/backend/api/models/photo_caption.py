@@ -230,7 +230,8 @@ class PhotoCaption(models.Model):
             return None
 
     def _store_generated_caption(self, captions, caption, commit, tag=None):
-        captions["im2txt"] = caption
+        if caption:
+            captions["im2txt"] = caption
         if tag:
             captions["im2txt_tag"] = tag
             self._update_caption_generator_album_things(tag)
@@ -252,12 +253,17 @@ class PhotoCaption(models.Model):
             return False
         file_ext = os.path.splitext(image_path)[1].lower()
 
-        if self.captions_json is None:
-            self.captions_json = {}
-        captions = self.captions_json
+        captions = self.captions_json or {}
 
         try:
             caption, tag = generate_image_caption(image_path, file_ext)
+            if not settings.FEATURE_SCENE_CLASSIFICATION:
+                tag = None
+            if not caption and not tag:
+                util.logger.warning(
+                    f"Caption generator returned no data for image {image_path}"
+                )
+                return False
             self._store_generated_caption(captions, caption, commit, tag)
 
             util.logger.info(
@@ -380,6 +386,13 @@ class PhotoCaption(models.Model):
 
         try:
             caption, tag = generate_image_caption(image_path, file_ext)
+            if not settings.FEATURE_IMAGE_CAPTIONING:
+                caption = None
+            if not caption and not tag:
+                util.logger.warning(
+                    f"Caption generator returned no data for image {image_path}"
+                )
+                return False
 
             if self.captions_json is None:
                 self.captions_json = {}
@@ -398,6 +411,7 @@ class PhotoCaption(models.Model):
             util.logger.info(
                 f"generated caption and tags for image {image_path}."
             )
+            return True
         except Exception as e:
             util.logger.exception(
                 f"could not generate tags for image "

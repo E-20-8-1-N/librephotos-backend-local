@@ -17,7 +17,7 @@ import uuid
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from api.models import File
+from api.models import File, User
 from api.tests.utils import create_test_photo, create_test_user
 
 URL = "/api/folders/subfolders/"
@@ -59,7 +59,9 @@ class SubfoldersAuthTests(SubfoldersTestBase):
         self.assertIn(resp.status_code, (401, 403))
 
     def test_regular_user_without_scan_directory_is_rejected(self):
-        user = create_test_user()  # scan_directory defaults to ""
+        user = create_test_user()
+        User.objects.filter(pk=user.pk).update(scan_directory="")
+        user.refresh_from_db()
         resp = self.client_for(user).get(URL)
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.json(), {"error": "User scan directory not configured"})
@@ -68,6 +70,8 @@ class SubfoldersAuthTests(SubfoldersTestBase):
         # The default-path branch runs before ``path`` is read, so an explicit
         # (valid) path does not help a user with no scan directory.
         user = create_test_user()
+        User.objects.filter(pk=user.pk).update(scan_directory="")
+        user.refresh_from_db()
         resp = self.client_for(user).get(URL, {"path": self.root})
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.json(), {"error": "User scan directory not configured"})
