@@ -3,7 +3,7 @@ Characterization tests for ``PhotoMetadata.extract_exif_data`` (unit 24).
 
 These pin the *current* behaviour of the classmethod before refactoring:
 the tag list passed to ``get_metadata``, the positional unpacking of its
-18-element result, the per-field truthiness/type guards, the keyword merge,
+37-element result, the per-field normalization/presence guards, the keyword merge,
 and the ``commit`` semantics.
 
 ``get_metadata`` is always mocked, so no exiftool binary or sidecar service
@@ -15,39 +15,8 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from api.metadata.tags import Tags
-from api.models.photo_metadata import PhotoMetadata
-from api.tests.utils import create_test_photo, create_test_user
-
-# Index of each value inside the tuple returned by get_metadata(), in the
-# order extract_exif_data unpacks it.
-IDX = {
-    "size": 0,
-    "fstop": 1,
-    "focal_length": 2,
-    "iso": 3,
-    "shutter_speed": 4,
-    "camera": 5,
-    "lens": 6,
-    "width": 7,
-    "height": 8,
-    "focal_length_35": 9,
-    "subject_distance": 10,
-    "digital_zoom_ratio": 11,
-    "video_length": 12,
-    "rating": 13,
-    "subsec_time_original": 14,
-    "image_number": 15,
-    "xmp_subject": 16,
-    "iptc_keywords": 17,
-}
-
-
-def metadata_tuple(**overrides):
-    """Build an 18-element get_metadata() result with named overrides."""
-    values = [None] * 18
-    for name, value in overrides.items():
-        values[IDX[name]] = value
-    return tuple(values)
+from api.models.photo_metadata import EXIF_TAGS, EXIF_VALUE_NAMES, PhotoMetadata
+from api.tests.utils import build_metadata_values, create_test_photo, create_test_user
 
 
 class ExtractExifDataBaseTestCase(TestCase):
@@ -59,7 +28,7 @@ class ExtractExifDataBaseTestCase(TestCase):
         """Run extract_exif_data with a mocked get_metadata result."""
         with patch(
             "api.models.photo_metadata.get_metadata",
-            return_value=metadata_tuple(**overrides),
+            return_value=build_metadata_values(**overrides),
         ) as mocked:
             result = PhotoMetadata.extract_exif_data(self.photo, commit=commit)
         self.mocked_get_metadata = mocked
@@ -87,29 +56,57 @@ class ExtractExifDataGuardTestCase(ExtractExifDataBaseTestCase):
         args, kwargs = self.mocked_get_metadata.call_args
         self.assertEqual(args[0], self.photo.main_file.path)
         self.assertTrue(kwargs["try_sidecar"])
-        self.assertEqual(
-            kwargs["tags"],
-            [
-                Tags.FILE_SIZE,
-                Tags.FSTOP,
-                Tags.FOCAL_LENGTH,
-                Tags.ISO,
-                Tags.EXPOSURE_TIME,
-                Tags.CAMERA,
-                Tags.LENS,
-                Tags.IMAGE_WIDTH,
-                Tags.IMAGE_HEIGHT,
-                Tags.FOCAL_LENGTH_35MM,
-                Tags.SUBJECT_DISTANCE,
-                Tags.DIGITAL_ZOOM_RATIO,
-                Tags.QUICKTIME_DURATION,
-                Tags.RATING,
-                Tags.SUBSEC_TIME_ORIGINAL,
-                Tags.IMAGE_NUMBER,
-                Tags.SUBJECT,
-                Tags.IPTC_KEYWORDS,
-            ],
+        self.assertEqual(kwargs["tags"], EXIF_TAGS)
+
+    def test_metadata_names_and_tags_are_positional_peers(self):
+        expected_pairs = (
+            ("size", Tags.FILE_SIZE),
+            ("fstop", Tags.FSTOP),
+            ("focal_length", Tags.FOCAL_LENGTH),
+            ("iso", Tags.ISO),
+            ("shutter_speed", Tags.EXPOSURE_TIME),
+            ("camera_make", Tags.CAMERA_MAKE),
+            ("camera", Tags.CAMERA),
+            ("lens_make", Tags.LENS_MAKE),
+            ("lens", Tags.LENS),
+            ("width", Tags.IMAGE_WIDTH),
+            ("height", Tags.IMAGE_HEIGHT),
+            ("focal_length_35mm", Tags.FOCAL_LENGTH_35MM),
+            ("subject_distance", Tags.SUBJECT_DISTANCE),
+            ("digital_zoom_ratio", Tags.DIGITAL_ZOOM_RATIO),
+            ("video_length", Tags.QUICKTIME_DURATION),
+            ("rating", Tags.RATING),
+            ("subsec_time_original", Tags.SUBSEC_TIME_ORIGINAL),
+            ("image_number", Tags.IMAGE_NUMBER),
+            ("date_time_original", Tags.DATE_TIME_ORIGINAL),
+            ("quicktime_create_date", Tags.QUICKTIME_CREATE_DATE),
+            ("timezone_offset", Tags.TIMEZONE_OFFSET),
+            ("latitude", Tags.LATITUDE),
+            ("longitude", Tags.LONGITUDE),
+            ("gps_altitude", Tags.GPS_ALTITUDE),
+            ("title", Tags.TITLE),
+            ("image_description", Tags.IMAGE_DESCRIPTION),
+            ("keys_description", Tags.KEYS_DESCRIPTION),
+            ("xmp_description", Tags.DESCRIPTION),
+            ("xmp_subject", Tags.SUBJECT),
+            ("iptc_keywords", Tags.IPTC_KEYWORDS),
+            ("creator", Tags.CREATOR),
+            ("copyright", Tags.COPYRIGHT),
+            ("orientation", Tags.ORIENTATION),
+            ("color_space", Tags.COLOR_SPACE),
+            ("bit_depth", Tags.BIT_DEPTH),
+            ("serial_number", Tags.SERIAL_NUMBER),
+            ("file_modify_date", Tags.FILE_MODIFY_DATE),
         )
+        self.assertEqual(
+            tuple(zip(EXIF_VALUE_NAMES, EXIF_TAGS, strict=True)), expected_pairs
+        )
+
+    def test_metadata_fixture_rejects_unknown_value_names(self):
+        with self.assertRaisesRegex(
+            ValueError, "Unknown metadata value names: misspelled"
+        ):
+            build_metadata_values(misspelled=1)
 
 
 class ExtractExifDataHappyPathTestCase(ExtractExifDataBaseTestCase):
@@ -124,7 +121,7 @@ class ExtractExifDataHappyPathTestCase(ExtractExifDataBaseTestCase):
             lens="RF 24-70mm",
             width=6000,
             height=4000,
-            focal_length_35=50,
+            focal_length_35mm=50,
             video_length=12.5,
             rating=4,
             subsec_time_original=123,
@@ -196,8 +193,8 @@ class ExtractExifDataHappyPathTestCase(ExtractExifDataBaseTestCase):
 
 
 class ExtractExifDataTypeGuardTestCase(ExtractExifDataBaseTestCase):
-    def test_non_numeric_values_are_ignored(self):
-        """Strings where numbers are expected are silently dropped."""
+    def test_numeric_strings_are_normalized(self):
+        """Numeric text, including values with units, is converted to numbers."""
         metadata = self.extract(
             size="not-a-number",
             fstop="f/2.8",
@@ -205,32 +202,30 @@ class ExtractExifDataTypeGuardTestCase(ExtractExifDataBaseTestCase):
             iso="ISO400",
             width="6000",
             height="4000",
-            focal_length_35="50",
+            focal_length_35mm="50",
             video_length="12s",
             rating="four",
         )
 
         self.photo.refresh_from_db()
-        # Photo.size / Photo.rating default to 0, so "untouched" means 0.
         self.assertEqual(self.photo.size, 0)
-        self.assertIsNone(self.photo.video_length)
+        self.assertEqual(self.photo.video_length, "12.0")
         self.assertEqual(self.photo.rating, 0)
 
-        self.assertIsNone(metadata.aperture)
-        self.assertIsNone(metadata.focal_length)
-        self.assertIsNone(metadata.iso)
-        self.assertIsNone(metadata.width)
-        self.assertIsNone(metadata.height)
-        self.assertIsNone(metadata.focal_length_35mm)
+        self.assertEqual(metadata.aperture, 2.8)
+        self.assertEqual(metadata.focal_length, 35.0)
+        self.assertEqual(metadata.iso, 400)
+        self.assertEqual(metadata.width, 6000)
+        self.assertEqual(metadata.height, 4000)
+        self.assertEqual(metadata.focal_length_35mm, 50)
         self.assertIsNone(metadata.rating)
 
-    def test_non_string_camera_and_lens_are_ignored(self):
+    def test_text_scalars_are_stringified_and_lists_use_first_item(self):
         metadata = self.extract(camera=12345, lens=["a", "b"])
-        self.assertIsNone(metadata.camera_model)
-        self.assertIsNone(metadata.lens_model)
+        self.assertEqual(metadata.camera_model, "12345")
+        self.assertEqual(metadata.lens_model, "a")
 
-    def test_zero_valued_numbers_are_dropped_except_rating(self):
-        """Truthiness guards drop 0 everywhere; rating uses `is not None`."""
+    def test_zero_valued_numbers_are_retained(self):
         metadata = self.extract(
             size=0,
             fstop=0,
@@ -238,7 +233,7 @@ class ExtractExifDataTypeGuardTestCase(ExtractExifDataBaseTestCase):
             iso=0,
             width=0,
             height=0,
-            focal_length_35=0,
+            focal_length_35mm=0,
             video_length=0,
             rating=0,
             image_number=0,
@@ -246,27 +241,27 @@ class ExtractExifDataTypeGuardTestCase(ExtractExifDataBaseTestCase):
 
         self.photo.refresh_from_db()
         self.assertEqual(self.photo.size, 0)
-        self.assertIsNone(self.photo.video_length)
-        # rating and image_number are guarded with `is not None`
+        self.assertEqual(self.photo.video_length, "0.0")
         self.assertEqual(self.photo.rating, 0)
         self.assertEqual(self.photo.image_sequence_number, 0)
 
-        self.assertIsNone(metadata.aperture)
-        self.assertIsNone(metadata.focal_length)
-        self.assertIsNone(metadata.iso)
-        self.assertIsNone(metadata.width)
-        self.assertIsNone(metadata.height)
-        self.assertIsNone(metadata.focal_length_35mm)
+        self.assertEqual(metadata.aperture, 0.0)
+        self.assertEqual(metadata.focal_length, 0.0)
+        self.assertEqual(metadata.iso, 0)
+        self.assertEqual(metadata.width, 0)
+        self.assertEqual(metadata.height, 0)
+        self.assertEqual(metadata.focal_length_35mm, 0)
         self.assertEqual(metadata.rating, 0)
 
-    def test_zero_shutter_speed_is_dropped(self):
+    def test_zero_shutter_speed_is_retained(self):
         metadata = self.extract(shutter_speed=0)
-        self.assertIsNone(metadata.shutter_speed)
+        self.assertEqual(metadata.shutter_speed, "0")
+        self.assertEqual(metadata.shutter_speed_seconds, 0.0)
 
-    def test_booleans_count_as_numbers(self):
-        """bool is a numbers.Number subclass, so True passes the guard."""
+    def test_boolean_iso_is_normalized_to_an_integer(self):
         metadata = self.extract(iso=True)
-        self.assertEqual(metadata.iso, True)
+        self.assertEqual(metadata.iso, 1)
+        self.assertIs(type(metadata.iso), int)
 
     def test_empty_subsec_string_leaves_fields_untouched(self):
         metadata = self.extract(subsec_time_original="")

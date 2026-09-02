@@ -7,6 +7,7 @@ from django.utils import timezone
 from faker import Faker
 
 from api.models import Cluster, Face, File, Person, Photo, User
+from api.models.photo_metadata import EXIF_VALUE_NAMES
 
 fake = Faker()
 
@@ -18,6 +19,14 @@ ONE_PIXEL_PNG = (
 
 def create_password():
     return secrets.token_urlsafe(10)
+
+
+def build_metadata_values(**overrides: Any) -> list[Any]:
+    """Build a complete positional get_metadata result from named values."""
+    unknown_names = sorted(set(overrides) - set(EXIF_VALUE_NAMES))
+    if unknown_names:
+        raise ValueError(f"Unknown metadata value names: {', '.join(unknown_names)}")
+    return [overrides.get(name) for name in EXIF_VALUE_NAMES]
 
 
 def create_user_details(is_admin=False):

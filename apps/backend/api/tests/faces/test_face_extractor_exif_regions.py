@@ -11,7 +11,6 @@ thumbnail on disk).  No network, no ML models, no exiftool binary.
 
 from unittest.mock import patch
 
-import numpy as np
 from django.test import TestCase
 
 from api import face_extractor
@@ -20,11 +19,10 @@ from api.metadata.tags import Tags
 IMAGE_PATH = "/photos/img.jpg"
 THUMB_PATH = "/thumbs/img.jpg"
 
-# The fake big thumbnail is 200 px wide and 100 px high (numpy shape is
-# (height, width, channels)).
+# The fake big thumbnail is 200 px wide and 100 px high. Pillow reports image
+# size as (width, height).
 THUMB_WIDTH = 200
 THUMB_HEIGHT = 100
-FAKE_THUMB = np.zeros((THUMB_HEIGHT, THUMB_WIDTH, 3), dtype=np.uint8)
 
 # Deliberately asymmetric so that every orientation branch produces a
 # distinguishable box.
@@ -50,7 +48,8 @@ class ExtractFromExifBaseTest(TestCase):
 
         open_patcher = patch("api.face_extractor.PIL.Image.open")
         self.mock_open = open_patcher.start()
-        self.mock_open.return_value = FAKE_THUMB
+        self.mock_image = self.mock_open.return_value.__enter__.return_value
+        self.mock_image.size = (THUMB_WIDTH, THUMB_HEIGHT)
         self.addCleanup(open_patcher.stop)
 
     def run_extract(self, region_info, orientation=None):
@@ -88,12 +87,12 @@ class ExtractFromExifMetadataTest(ExtractFromExifBaseTest):
 
 
 class ExtractFromExifRegionFilterTest(ExtractFromExifBaseTest):
-    def test_non_face_regions_are_skipped_before_opening_thumbnail(self):
+    def test_non_face_regions_are_skipped(self):
         result = self.run_extract(
             {"RegionList": [{"Type": "Pet", "Name": "Rex", "Area": dict(AREA)}]}
         )
         self.assertEqual(result, [])
-        self.mock_open.assert_not_called()
+        self.mock_open.assert_called_once_with(THUMB_PATH)
 
     def test_region_without_type_is_skipped(self):
         result = self.run_extract({"RegionList": [{"Name": "Alice"}]})
@@ -110,8 +109,7 @@ class ExtractFromExifRegionFilterTest(ExtractFromExifBaseTest):
         result = self.run_extract({"RegionList": [face_region(area=area)]})
         self.assertEqual(result, [])
 
-    def test_thumbnail_is_reopened_for_every_face_region(self):
-        """Quirk: ``PIL.Image.open`` is called once per Face region."""
+    def test_thumbnail_is_opened_once_for_all_regions(self):
         regions = [
             face_region("A", dict(AREA)),
             face_region("B", dict(AREA)),
@@ -119,8 +117,7 @@ class ExtractFromExifRegionFilterTest(ExtractFromExifBaseTest):
         ]
         result = self.run_extract({"RegionList": regions})
         self.assertEqual(len(result), 2)
-        self.assertEqual(self.mock_open.call_count, 2)
-        self.mock_open.assert_called_with(THUMB_PATH)
+        self.mock_open.assert_called_once_with(THUMB_PATH)
 
 
 class ExtractFromExifNormalizedAreaTest(ExtractFromExifBaseTest):

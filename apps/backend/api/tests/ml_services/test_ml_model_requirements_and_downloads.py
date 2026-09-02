@@ -37,10 +37,7 @@ def _ocr_model(tier):
 
 class MlModelsTest(TestCase):
     def _create_required_models(self, model_root: Path):
-        (model_root / "im2txt").mkdir(parents=True)
         (model_root / "clip-embeddings").mkdir(parents=True)
-        (model_root / "places365").mkdir(parents=True)
-        (model_root / "resnet18-5c106cde.pth").write_bytes(b"model")
 
     @override_config(
         CAPTIONING_MODEL="im2txt",
@@ -255,10 +252,11 @@ class DownloadModelsJobTest(TestCase):
 
     def test_one_failing_model_does_not_stop_the_others(self):
         attempted = []
+        failed_model = ML_MODELS[0]["name"]
 
         def fake_download_model(model):
             attempted.append(model["name"])
-            if model["name"] == "places365":
+            if model["name"] == failed_model:
                 raise requests.HTTPError("404 Error")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -273,7 +271,7 @@ class DownloadModelsJobTest(TestCase):
         job = LongRunningJob.objects.get(job_type=LongRunningJob.JOB_DOWNLOAD_MODELS)
         self.assertTrue(job.failed)
         self.assertTrue(job.finished)
-        self.assertIn("places365", job.result["error"])
+        self.assertIn(failed_model, job.result["error"])
         self.assertEqual(len(ML_MODELS), job.progress_current)
 
     def test_job_completes_when_every_model_downloads(self):
@@ -338,20 +336,8 @@ class ModelSourceUrlTest(TestCase):
 
     def test_mirrored_models_point_at_librephotos_mirror(self):
         mirror = "huggingface.co/derneuere/librephotos_models"
-
-        siglip2 = self._model("siglip2")
-        moondream = self._model("moondream")
-
-        expected_mirrored = [
-            self._model("mistral-7b-instruct-v0.2.Q5_K_M")["url"],
-            siglip2["url"],
-            siglip2["additional_files"][0]["url"],
-            siglip2["additional_files"][1]["url"],
-            moondream["url"],
-            moondream["additional_files"][0]["url"],
-        ]
-
-        for url in expected_mirrored:
+        for name in ("ppocrv6_tiny", "ppocrv6_small", "ppocrv6_medium"):
+            url = self._model(name)["url"]
             self.assertIn(mirror, url, f"{url} must be served from the mirror")
 
 
@@ -440,8 +426,6 @@ class MlModelSelectionTest(TestCase):
 
     def _create_required_models(self, model_root: Path):
         (model_root / "clip-embeddings").mkdir(parents=True)
-        (model_root / "places365").mkdir(parents=True)
-        (model_root / "resnet18-5c106cde.pth").write_bytes(b"model")
         selected_face_model = model_root / "face_recognition" / "models" / "buffalo_sc"
         selected_face_model.mkdir(parents=True)
         (selected_face_model / "w600k_mbf.onnx").write_bytes(b"model")
@@ -452,8 +436,8 @@ class MlModelSelectionTest(TestCase):
         TAGGING_MODEL="places365",
         FACE_RECOGNITION_MODEL="buffalo_sc",
     )
-    def test_moondream_selected_as_captioning_model(self):
-        self.assertIn("moondream", self._selected_model_names())
+    def test_removed_captioning_model_is_not_required(self):
+        self.assertNotIn("moondream", self._selected_model_names())
 
     @override_config(
         CAPTIONING_MODEL="None",
@@ -461,8 +445,8 @@ class MlModelSelectionTest(TestCase):
         TAGGING_MODEL="places365",
         FACE_RECOGNITION_MODEL="buffalo_sc",
     )
-    def test_moondream_selected_as_llm_model(self):
-        self.assertIn("moondream", self._selected_model_names())
+    def test_removed_llm_model_is_not_required(self):
+        self.assertNotIn("moondream", self._selected_model_names())
 
     @override_config(
         CAPTIONING_MODEL="im2txt",
@@ -470,7 +454,7 @@ class MlModelSelectionTest(TestCase):
         TAGGING_MODEL="places365",
         FACE_RECOGNITION_MODEL="buffalo_sc",
     )
-    def test_moondream_not_selected_when_unused(self):
+    def test_removed_model_is_not_selected_when_unused(self):
         self.assertNotIn("moondream", self._selected_model_names())
 
     @override_config(
@@ -479,15 +463,11 @@ class MlModelSelectionTest(TestCase):
         TAGGING_MODEL="places365",
         FACE_RECOGNITION_MODEL="buffalo_sc",
     )
-    def test_do_all_models_exist_requires_moondream_for_captioning(self):
+    def test_do_all_models_exist_ignores_removed_captioning_model(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             media_root = Path(temp_dir) / "protected_media"
             model_root = media_root / "data_models"
             self._create_required_models(model_root)
 
             with override_settings(MEDIA_ROOT=str(media_root)):
-                self.assertFalse(do_all_models_exist())
-
-                (model_root / "moondream2-text-model-f16.gguf").write_bytes(b"model")
-                (model_root / "moondream2-mmproj-f16.gguf").write_bytes(b"model")
                 self.assertTrue(do_all_models_exist())

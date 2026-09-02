@@ -25,6 +25,7 @@ from unittest.mock import patch
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from api.models import User
 from api.tests.utils import create_test_user
 from api.views.views import ScanPhotosView, SelectiveScanPhotosView
 
@@ -109,7 +110,9 @@ class ScanPhotosViewValidationTest(ScanViewTestBase):
     """The two guard clauses at the top of ``_scan_photos``."""
 
     def test_missing_scan_directory_returns_400(self):
-        user = create_test_user(scan_directory="")
+        user = create_test_user()
+        User.objects.filter(pk=user.pk).update(scan_directory="")
+        user.refresh_from_db()
         response = self.call_view(ScanPhotosView, user=user)
 
         self.assertEqual(response.status_code, 400)
@@ -262,7 +265,9 @@ class SelectiveScanPhotosViewTest(ScanViewTestBase):
         self.assertTrue(response.data["status"])
 
     def test_missing_scan_directory_returns_400(self):
-        user = create_test_user(scan_directory="")
+        user = create_test_user()
+        User.objects.filter(pk=user.pk).update(scan_directory="")
+        user.refresh_from_db()
         response = self.call_view(SelectiveScanPhotosView, user=user)
 
         self.assertEqual(response.status_code, 400)

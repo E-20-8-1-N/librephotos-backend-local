@@ -1,6 +1,7 @@
 import logging
 import tempfile
-from unittest.mock import patch
+import uuid
+from unittest.mock import ANY, patch
 
 from constance.test import override_config
 from django.core.management import call_command
@@ -8,6 +9,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from api.models import User
+from api.signals import _run_user_scan
 from api.tests.utils import create_test_user, create_user_details
 
 logger = logging.getLogger(__name__)
@@ -283,14 +285,9 @@ class UserTest(TestCase):
         data = response.json()
         self.assertNotEqual("/data", data["scan_directory"])
 
-    @patch("api.signals.do_all_models_exist", return_value=True)
-    @patch("api.signals.Chain")
-    def test_new_user_with_existing_scan_directory_triggers_scan(
-        self, mock_chain_cls, _mock_do_all_models_exist
-    ):
+    @patch("api.signals.threading.Thread")
+    def test_new_user_with_existing_scan_directory_triggers_scan(self, mock_thread_cls):
         with tempfile.TemporaryDirectory() as scan_directory:
-            mock_chain = mock_chain_cls.return_value
-
             user = User.objects.create_user(
                 username="autoscanuser",
                 email="autoscan@example.com",
@@ -298,18 +295,19 @@ class UserTest(TestCase):
                 scan_directory=scan_directory,
             )
 
-        mock_chain.append.assert_called_once()
-        append_args = mock_chain.append.call_args.args
-        self.assertEqual(append_args[0].__name__, "scan_photos")
-        self.assertEqual(append_args[1], user)
-        self.assertFalse(append_args[2])
-        self.assertEqual(append_args[4], scan_directory)
-        mock_chain.run.assert_called_once()
+        mock_thread_cls.assert_called_once_with(
+            target=_run_user_scan,
+            args=(user, ANY),
+            name=f"auto-scan-{user.pk}",
+            daemon=True,
+        )
+        job_id = mock_thread_cls.call_args.kwargs["args"][1]
+        self.assertIsInstance(job_id, uuid.UUID)
+        mock_thread_cls.return_value.start.assert_called_once_with()
 
-    @patch("api.signals.do_all_models_exist", return_value=True)
-    @patch("api.signals.Chain")
+    @patch("api.signals.threading.Thread")
     def test_new_user_without_existing_scan_directory_does_not_trigger_scan(
-        self, mock_chain_cls, _mock_do_all_models_exist
+        self, mock_thread_cls
     ):
         User.objects.create_user(
             username="noscanuser",
@@ -318,4 +316,4 @@ class UserTest(TestCase):
             scan_directory="/path/that/does/not/exist",
         )
 
-        mock_chain_cls.assert_not_called()
+        mock_thread_cls.assert_not_called()

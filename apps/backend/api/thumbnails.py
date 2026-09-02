@@ -14,19 +14,17 @@ register_heif_opener()
 BACKEND_HOST = os.getenv("BACKEND_HOST", "backend")
 
 _ORIENTATION_TRANSFORMS = {
-    2: ImageOps.mirror,
-    3: lambda image: image.rotate(180, expand=True),
-    4: ImageOps.flip,
-    5: lambda image: ImageOps.mirror(image.rotate(90, expand=True)),
-    6: lambda image: image.rotate(-90, expand=True),
-    7: lambda image: ImageOps.mirror(image.rotate(-90, expand=True)),
-    8: lambda image: image.rotate(90, expand=True),
+    2: Image.Transpose.FLIP_LEFT_RIGHT,
+    3: Image.Transpose.ROTATE_180,
+    4: Image.Transpose.FLIP_TOP_BOTTOM,
+    5: Image.Transpose.TRANSPOSE,
+    6: Image.Transpose.ROTATE_270,
+    7: Image.Transpose.TRANSVERSE,
+    8: Image.Transpose.ROTATE_90,
 }
 
 
-def _apply_local_orientation(
-    image: Image.Image, local_orientation: int
-) -> Image.Image:
+def _apply_local_orientation(image: Image.Image, local_orientation: int) -> Image.Image:
     """Apply a user-specified orientation transform to an already-upright Pillow image.
 
     ``local_orientation`` follows the EXIF Orientation convention (1-8).
@@ -39,15 +37,15 @@ def _apply_local_orientation(
         2 – flip horizontal
         3 – rotate 180°
         4 – flip vertical
-        5 – rotate 90° CCW then flip horizontal
+        5 – transpose across the top-left/bottom-right diagonal
         6 – rotate 90° CW
-        7 – rotate 90° CW then flip horizontal
+        7 – transpose across the top-right/bottom-left diagonal
         8 – rotate 90° CCW (= 270° CW)
     """
     transform = _ORIENTATION_TRANSFORMS.get(local_orientation)
     if transform is None:
         return image
-    return transform(image)
+    return image.transpose(transform)
 
 
 def _media_path(output_path, hash, file_type):

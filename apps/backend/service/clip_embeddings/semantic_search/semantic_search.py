@@ -44,9 +44,15 @@ class SemanticSearch:
                     image.close()
                 print(f"Error loading image: {path}")
             except Exception as e:
-                if image is not None:
-                    image.close()
+                for opened_image in (*imgs, image):
+                    if opened_image is None:
+                        continue
+                    try:
+                        opened_image.close()
+                    except Exception:
+                        pass
                 print(f"Error loading image {path}: {e}")
+                raise
         return imgs
 
     def batch_embeddings(self, imgs_emb):

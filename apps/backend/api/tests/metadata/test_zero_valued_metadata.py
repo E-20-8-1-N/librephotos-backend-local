@@ -13,7 +13,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from api.models.photo_metadata import PhotoMetadata
-from api.tests.utils import create_test_photo, create_test_user
+from api.tests.utils import build_metadata_values, create_test_photo, create_test_user
 
 
 class GeolocateZeroCoordinateTestCase(TestCase):
@@ -59,10 +59,7 @@ class ZeroRatingAndImageNumberTestCase(TestCase):
 
     def test_zero_rating_and_image_number_are_kept(self):
         """rating == 0 and ImageNumber == 0 must be recorded, not dropped."""
-        # 18-element tuple matching the tags requested in extract_exif_data.
-        mock_values = [None] * 18
-        mock_values[13] = 0  # RATING (explicit 0 stars)
-        mock_values[15] = 0  # IMAGE_NUMBER (first frame of a burst)
+        mock_values = build_metadata_values(rating=0, image_number=0)
 
         with patch("api.models.photo_metadata.get_metadata", return_value=mock_values):
             metadata = PhotoMetadata.extract_exif_data(self.photo, commit=True)

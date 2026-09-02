@@ -277,7 +277,7 @@ class TestGetFaceRegionTags(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         tags = get_face_region_tags(photo)
@@ -315,7 +315,7 @@ class TestGetFaceRegionTags(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         tags = get_face_region_tags(photo)
@@ -348,7 +348,7 @@ class TestGetFaceRegionTags(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         tags = get_face_region_tags(photo)
@@ -379,7 +379,7 @@ class TestGetFaceRegionTags(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         tags = get_face_region_tags(photo)
@@ -420,7 +420,7 @@ class TestGetFaceRegionTags(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         tags = get_face_region_tags(photo)
@@ -464,7 +464,7 @@ class TestGetFaceRegionTags(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         tags = get_face_region_tags(photo)
@@ -502,7 +502,7 @@ class TestSaveMetadataIntegration(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         photo._save_metadata(use_sidecar=True, metadata_types=["face_tags"])
@@ -562,7 +562,7 @@ class TestSaveMetadataIntegration(TestCase):
 
         mock_img = MagicMock()
         mock_img.size = (1000, 800)
-        mock_pil_open.return_value = mock_img
+        mock_pil_open.return_value.__enter__.return_value = mock_img
         mock_get_metadata.return_value = (None, 4000, 3000)
 
         photo._save_metadata(use_sidecar=True, metadata_types=["ratings", "face_tags"])

@@ -28,6 +28,7 @@ from api.face_recognition import (
 )
 
 
+@patch("api.face_recognition.BACKEND_HOST", "localhost")
 class FaceRecognitionClientTest(SimpleTestCase):
     @patch("api.face_recognition.requests.post")
     @patch("api.face_recognition.site_config")

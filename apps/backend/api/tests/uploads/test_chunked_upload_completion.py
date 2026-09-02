@@ -20,7 +20,7 @@ from constance.test import override_config
 from django.test import RequestFactory, TestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
-from api.models import Photo
+from api.models import Photo, User
 from api.tests.utils import create_test_photo, create_test_user
 from api.views.upload import UploadPhotosChunked, UploadPhotosChunkedComplete
 
@@ -107,8 +107,8 @@ class UploadPhotosChunkedCheckPermissionsTest(TestCase):
     def test_permission_check_ignores_scan_directory(self):
         # check_permissions does not care about scan_directory; only
         # on_completion validates it.
-        self.user.scan_directory = ""
-        self.user.save()
+        User.objects.filter(pk=self.user.pk).update(scan_directory="")
+        self.user.refresh_from_db()
 
         self.assertIsNone(
             self.view.check_permissions(make_request(jwt=token_for(self.user)))
@@ -204,8 +204,8 @@ class OnCompletionAuthTest(OnCompletionTestBase):
 
 class OnCompletionScanDirectoryTest(OnCompletionTestBase):
     def test_missing_scan_directory_is_rejected(self):
-        self.user.scan_directory = ""
-        self.user.save()
+        User.objects.filter(pk=self.user.pk).update(scan_directory="")
+        self.user.refresh_from_db()
 
         with self.assertRaises(ChunkedUploadError) as ctx:
             self.run_on_completion()

@@ -2,7 +2,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from django.conf import settings
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -150,18 +150,20 @@ class SceneClassificationFeatureFlagTest(TestCase):
         self.photo = create_test_photo(owner=self.user)
         self.caption = PhotoCaption.objects.create(photo=self.photo)
 
-    @patch("requests.post")
-    def test_tags_are_generated_by_default(self, post_mock):
-        post_mock.return_value = MagicMock(ok=False, status_code=503)
+    @patch(
+        "api.models.photo_caption.generate_image_caption",
+        return_value=("a cat", "cat, pet"),
+    )
+    def test_tags_are_generated_by_default(self, generate_caption_mock):
 
         self.caption.generate_tag_captions()
-        post_mock.assert_called_once()
+        generate_caption_mock.assert_called_once()
 
     @override_settings(FEATURE_SCENE_CLASSIFICATION=False)
-    @patch("requests.post")
-    def test_tags_skipped_when_disabled(self, post_mock):
+    @patch("api.models.photo_caption.generate_image_caption")
+    def test_tags_skipped_when_disabled(self, generate_caption_mock):
         self.caption.generate_tag_captions()
-        post_mock.assert_not_called()
+        generate_caption_mock.assert_not_called()
 
 
 class ImageCaptioningFeatureFlagTest(TestCase):
@@ -172,13 +174,16 @@ class ImageCaptioningFeatureFlagTest(TestCase):
         self.photo = create_test_photo(owner=self.user)
         self.caption = PhotoCaption.objects.create(photo=self.photo)
 
-    @patch("api.models.photo_caption.generate_caption", return_value="a cat")
+    @patch(
+        "api.models.photo_caption.generate_image_caption",
+        return_value=("a cat", None),
+    )
     def test_captions_are_generated_by_default(self, generate_caption_mock):
         self.assertTrue(self.caption.generate_captions_im2txt())
         generate_caption_mock.assert_called_once()
 
     @override_settings(FEATURE_IMAGE_CAPTIONING=False)
-    @patch("api.models.photo_caption.generate_caption")
+    @patch("api.models.photo_caption.generate_image_caption")
     def test_captions_skipped_when_disabled(self, generate_caption_mock):
         self.assertFalse(self.caption.generate_captions_im2txt())
         generate_caption_mock.assert_not_called()
