@@ -1,0 +1,15 @@
+# Local unified-image overlay. Use with docker-compose.unified.yml.
+services:
+  db:
+    image: postgres:18-alpine
+  backend:
+    image: cetapod/librephotos_backend_unified_local:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/unified/Dockerfile
+    volumes:
+      - /mnt:/data
+      - /etc:/etc:ro
+    environment:
+      WEB_CONCURRENCY: "2"
+      ALLOW_UPLOAD: "true"

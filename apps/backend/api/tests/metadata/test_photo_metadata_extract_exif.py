@@ -162,6 +162,9 @@ class ExtractExifDataGuardTestCase(ExtractExifDataBaseTestCase):
                 Tags.QUICKTIME_MODEL,
                 Tags.ROTATION,
                 Tags.ORIENTATION,
+                Tags.KEYS_DESCRIPTION,
+                Tags.FILE_MODIFY_DATE,
+                Tags.TIMEZONE_OFFSET,
             ],
         )
 
@@ -248,8 +251,8 @@ class ExtractExifDataHappyPathTestCase(ExtractExifDataBaseTestCase):
 
 
 class ExtractExifDataTypeGuardTestCase(ExtractExifDataBaseTestCase):
-    def test_non_numeric_values_are_ignored(self):
-        """Strings where numbers are expected are silently dropped."""
+    def test_numeric_text_is_normalized_and_unparseable_values_are_ignored(self):
+        """dev-upstream accepts numeric EXIF text, retaining guards on invalid values."""
         metadata = self.extract(
             size="not-a-number",
             fstop="f/2.8",
@@ -265,15 +268,15 @@ class ExtractExifDataTypeGuardTestCase(ExtractExifDataBaseTestCase):
         self.photo.refresh_from_db()
         # Photo.size / Photo.rating default to 0, so "untouched" means 0.
         self.assertEqual(self.photo.size, 0)
-        self.assertIsNone(self.photo.video_length)
+        self.assertEqual(self.photo.video_length, "12.0")
         self.assertEqual(self.photo.rating, 0)
 
-        self.assertIsNone(metadata.aperture)
-        self.assertIsNone(metadata.focal_length)
-        self.assertIsNone(metadata.iso)
-        self.assertIsNone(metadata.width)
-        self.assertIsNone(metadata.height)
-        self.assertIsNone(metadata.focal_length_35mm)
+        self.assertEqual(metadata.aperture, 2.8)
+        self.assertEqual(metadata.focal_length, 35)
+        self.assertEqual(metadata.iso, 400)
+        self.assertEqual(metadata.width, 6000)
+        self.assertEqual(metadata.height, 4000)
+        self.assertEqual(metadata.focal_length_35mm, 50)
 
     def test_non_string_camera_and_lens_are_ignored(self):
         metadata = self.extract(camera=12345, lens=["a", "b"])

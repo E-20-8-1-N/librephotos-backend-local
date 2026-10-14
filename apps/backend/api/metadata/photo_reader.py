@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from django.db.models import Q, QuerySet
 
 from api.geocode.photo_location import apply_file_position
+from api.metadata.normalization import file_values
 from api.metadata.reader import MetadataReadError, get_metadata, sidecar_files_for_photo
 from api.metadata.tags import Tags
 from api.models.photo_metadata import PhotoMetadata, format_exposure_time
@@ -77,6 +78,9 @@ EXIF_FIELDS: tuple[tuple[str, str], ...] = (
     ("rotation", Tags.ROTATION),
     # A photo's EXIF orientation, which turns its stored size into the shown one (#2568).
     ("orientation", Tags.ORIENTATION),
+    ("keys_description", Tags.KEYS_DESCRIPTION),
+    ("file_modify_date", Tags.FILE_MODIFY_DATE),
+    ("timezone_offset", Tags.TIMEZONE_OFFSET),
 )
 
 EXIF_VALUE_NAMES = tuple(name for name, _ in EXIF_FIELDS)
@@ -121,7 +125,7 @@ def read_file_values(photo: Photo) -> dict[str, object]:
             ),
         )
     )
-    return values
+    return file_values(values)
 
 
 def misread_exposure_times() -> QuerySet[PhotoMetadata]:

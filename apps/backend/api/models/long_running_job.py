@@ -140,8 +140,10 @@ class LongRunningJob(models.Model):
     JOB_DETECT_STACKS = 22
     JOB_STRIP_THUMBNAIL_METADATA = 23
     JOB_EMPTY_TRASH = 24
+    JOB_GENERATE_IM2TXT = 25
 
     JOB_TYPES = (
+        (JOB_GENERATE_IM2TXT, "Generate Image Captions"),
         (JOB_SCAN_PHOTOS, "Scan Photos"),
         (JOB_GENERATE_AUTO_ALBUMS, "Generate Event Albums"),
         (JOB_GENERATE_AUTO_ALBUM_TITLES, "Regenerate Event Titles"),

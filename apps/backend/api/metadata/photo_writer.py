@@ -46,8 +46,7 @@ logger = logging.getLogger(__name__)
 def write_target(user: User) -> bool | None:
     """Where ``user``'s edits are written back: None when they are not.
 
-    None for "Synchronize metadata to disk: Off" (the default, which keeps
-    LibrePhotos away from the user's files), else ``use_sidecar``: True for
+    None for "Synchronize metadata to disk: Off", else ``use_sidecar``: True for
     the XMP sidecar, False for the media file. Every write path asks this
     instead of reading ``save_metadata_to_disk`` itself (#2293).
     """
@@ -149,10 +148,14 @@ def write_photo_metadata(
 # ---------------------------------------------------------- caption, location
 
 
-def caption_tags(caption: str, use_sidecar: bool) -> dict[str, TagValue]:
+def caption_tags(
+    caption: str, use_sidecar: bool, video: bool = False
+) -> dict[str, TagValue]:
     """The tags that make ``caption`` the description; an empty one removes it."""
-    tag = Tags.DESCRIPTION_XMP if use_sidecar else Tags.DESCRIPTION_MWG
-    return {tag: caption}
+    if use_sidecar:
+        return {Tags.DESCRIPTION_XMP: caption}
+    native_tag = Tags.KEYS_DESCRIPTION if video else Tags.IMAGE_DESCRIPTION
+    return {Tags.DESCRIPTION_MWG: caption, native_tag: caption}
 
 
 def write_caption(photo: Photo, use_sidecar: bool) -> None:
@@ -173,9 +176,11 @@ def write_caption(photo: Photo, use_sidecar: bool) -> None:
         .first()
     )
     caption = captions.get("user_caption") if isinstance(captions, dict) else None
+    text = caption if isinstance(caption, str) else ""
+    tags = caption_tags(text, use_sidecar, video=photo.video)
     if _write_edit(
         photo,
-        caption_tags(caption if isinstance(caption, str) else "", use_sidecar),
+        tags,
         use_sidecar,
         options=(WriteOption.MWG, WriteOption.MULTILINE),
     ):

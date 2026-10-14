@@ -124,56 +124,56 @@ ML_MODELS: list[MlModel] = [
         "target-dir": "face_recognition/models/buffalo_s",
         "sha256": "d85a87f503f691807cd8bb97128bdf7a0660326cd9cd02657127fa978bab8b5e",
     },
-    {
-        # Liquid AI's LFM2.5-VL-450M (ONNX export by onnx-community, 4-bit
-        # weights, fp32 activations): the captioner. A vision-language model,
-        # so the caption prompt can carry a person's name and the place. About
-        # 0.9 GB of RAM while it captions. Always kept available, so turning
-        # captioning on never waits for a download. The .onnx_data files are
-        # the weights the small .onnx graphs point at and must keep their
-        # names. Not the q4f16 export: its FastGelu nodes run in float16,
-        # and not every ONNX Runtime CPU build has a float16 kernel for that
-        # (NOT_IMPLEMENTED at session creation; seen on an ARM64 host).
-        "id": 18,
-        "name": "lfm2_vl_450m",
-        "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/vision_encoder_q4.onnx",
-        "type": MlTypes.CAPTIONING,
-        "unpack-command": None,
-        "target-dir": "lfm2_vl_450m/vision_encoder_q4.onnx",
-        "sha256": "3457fe118939ecd52183660abafbbd32c810f41a0e8d1119a1f07ca2d4d9dcfc",
-        "additional_files": [
-            {
-                "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/vision_encoder_q4.onnx_data",
-                "target": "lfm2_vl_450m/vision_encoder_q4.onnx_data",
-                "sha256": "03171ff302af006d2e5f55f9c09531d7938565626334809c94e6de54afc840b5",
-            },
-            {
-                "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/embed_tokens_q4.onnx",
-                "target": "lfm2_vl_450m/embed_tokens_q4.onnx",
-                "sha256": "f0d663cbf75fc6a0c7b9669177335139b0c5a63575c6413037d48501eea0c4a5",
-            },
-            {
-                "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/embed_tokens_q4.onnx_data",
-                "target": "lfm2_vl_450m/embed_tokens_q4.onnx_data",
-                "sha256": "255994cbb7269ea24b43d3d57a7e64dcb54da69c77ea612f9c32af3dbb95158e",
-            },
-            {
-                "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx",
-                "target": "lfm2_vl_450m/decoder_model_merged_q4.onnx",
-                "sha256": "00b4c0ed1008194b6ed813e5d17724db122ef71e963197424022aaf93966515a",
-            },
-            {
-                "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx_data",
-                "target": "lfm2_vl_450m/decoder_model_merged_q4.onnx_data",
-                "sha256": "0440e6e97953a70705ef1901cb1267bc80cb69ae7d4ca25010891c5770e989d5",
-            },
-            {
-                "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/tokenizer.json",
-                "target": "lfm2_vl_450m/tokenizer.json",
-                "sha256": "d3f7877aa8c9ce603604f2cf78c280c24d8b6087c24669610f3391bcd3f703cf",
-            },
-        ],
-    },
+    # {
+    #     # Liquid AI's LFM2.5-VL-450M (ONNX export by onnx-community, 4-bit
+    #     # weights, fp32 activations): the captioner. A vision-language model,
+    #     # so the caption prompt can carry a person's name and the place. About
+    #     # 0.9 GB of RAM while it captions. Always kept available, so turning
+    #     # captioning on never waits for a download. The .onnx_data files are
+    #     # the weights the small .onnx graphs point at and must keep their
+    #     # names. Not the q4f16 export: its FastGelu nodes run in float16,
+    #     # and not every ONNX Runtime CPU build has a float16 kernel for that
+    #     # (NOT_IMPLEMENTED at session creation; seen on an ARM64 host).
+    #     "id": 18,
+    #     "name": "lfm2_vl_450m",
+    #     "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/vision_encoder_q4.onnx",
+    #     "type": MlTypes.CAPTIONING,
+    #     "unpack-command": None,
+    #     "target-dir": "lfm2_vl_450m/vision_encoder_q4.onnx",
+    #     "sha256": "3457fe118939ecd52183660abafbbd32c810f41a0e8d1119a1f07ca2d4d9dcfc",
+    #     "additional_files": [
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/vision_encoder_q4.onnx_data",
+    #             "target": "lfm2_vl_450m/vision_encoder_q4.onnx_data",
+    #             "sha256": "03171ff302af006d2e5f55f9c09531d7938565626334809c94e6de54afc840b5",
+    #         },
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/embed_tokens_q4.onnx",
+    #             "target": "lfm2_vl_450m/embed_tokens_q4.onnx",
+    #             "sha256": "f0d663cbf75fc6a0c7b9669177335139b0c5a63575c6413037d48501eea0c4a5",
+    #         },
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/embed_tokens_q4.onnx_data",
+    #             "target": "lfm2_vl_450m/embed_tokens_q4.onnx_data",
+    #             "sha256": "255994cbb7269ea24b43d3d57a7e64dcb54da69c77ea612f9c32af3dbb95158e",
+    #         },
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx",
+    #             "target": "lfm2_vl_450m/decoder_model_merged_q4.onnx",
+    #             "sha256": "00b4c0ed1008194b6ed813e5d17724db122ef71e963197424022aaf93966515a",
+    #         },
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx_data",
+    #             "target": "lfm2_vl_450m/decoder_model_merged_q4.onnx_data",
+    #             "sha256": "0440e6e97953a70705ef1901cb1267bc80cb69ae7d4ca25010891c5770e989d5",
+    #         },
+    #         {
+    #             "url": "https://huggingface.co/onnx-community/LFM2.5-VL-450M-ONNX/resolve/main/tokenizer.json",
+    #             "target": "lfm2_vl_450m/tokenizer.json",
+    #             "sha256": "d3f7877aa8c9ce603604f2cf78c280c24d8b6087c24669610f3391bcd3f703cf",
+    #         },
+    #     ],
+    # },
     {
         "id": 10,
         "name": "buffalo_m",
@@ -250,7 +250,11 @@ def _is_model_selected(model: MlModel) -> bool:
     """
     model_type = model["type"]
     if model_type == MlTypes.CAPTIONING:
-        return feature_enabled("IMAGE_CAPTIONING") and captioning_model_selected()
+        return (
+            feature_enabled("IMAGE_CAPTIONING")
+            and captioning_model_selected()
+            and site_config.CAPTIONING_MODEL != "caption_generator"
+        )
     if model_type == MlTypes.CLIP:
         # Tags, semantic search and similar photos: always needed.
         return True
@@ -598,6 +602,8 @@ def captioning_model_exists() -> bool:
     A caption request that reaches the sidecar without them fails inside
     ONNX Runtime; the caller checks here first and starts the download.
     """
+    if site_config.CAPTIONING_MODEL == "caption_generator":
+        return True
     model_folder = _models_folder()
     return all(
         _model_target_exists(model_folder, model)
@@ -626,6 +632,11 @@ def feature_model_ready(
     """
     model_type = FEATURE_MODEL_TYPES.get(feature)
     if model_type is None:
+        return None
+    if (
+        feature in ("IMAGE_CAPTIONING", "SCENE_CLASSIFICATION")
+        and captioning_model == "caption_generator"
+    ):
         return None
     if model_type == MlTypes.CAPTIONING and _is_model_not_selected(captioning_model):
         return None

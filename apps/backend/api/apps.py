@@ -31,6 +31,7 @@ SIGNAL_MODULES = (
     # Before a user is deleted, however that happens: turn off their public
     # links and make room for their albums and tags in ``deleted``.
     "api.accounts.deletion",
+    "api.accounts.home_scan",
 )
 
 

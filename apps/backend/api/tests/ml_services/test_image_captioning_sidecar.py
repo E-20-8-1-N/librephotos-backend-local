@@ -10,9 +10,9 @@ the next request loads a fresh one.
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
+from service.image_captioning import lfm2_vl
 
 from api.tests.stubs import load_backend_file
-from service.image_captioning import lfm2_vl
 
 
 def _load_sidecar_main():

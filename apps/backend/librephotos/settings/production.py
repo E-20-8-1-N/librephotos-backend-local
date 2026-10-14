@@ -24,6 +24,25 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE_LOGS = env_str("BASE_LOGS", "/logs/")
 BASE_DATA = env_str("BASE_DATA", "/")
 PHOTOS = env_str("PHOTOS", os.path.join(BASE_DATA, "data"))
+USER_HOME_DIRECTORY_PREFIX = env_str("USER_HOME_DIRECTORY_PREFIX", "/data/pool/home/")
+CAPTION_GENERATOR_HOST = env_str("CAPTION_GENERATOR_HOST", "caption-generator")
+CAPTION_GENERATOR_PORT = env_int("CAPTION_GENERATOR_PORT", 8020)
+CAPTION_GENERATOR_API_ENDPOINT = env_str(
+    "CAPTION_GENERATOR_API_ENDPOINT", "rushgenerate"
+)
+CAPTION_GENERATOR_HEALTH_ENDPOINT = env_str(
+    "CAPTION_GENERATOR_HEALTH_ENDPOINT", "health"
+)
+CAPTION_GENERATOR_TIMEOUT_SEC = env_int("CAPTION_GENERATOR_TIMEOUT_SEC", 300)
+CAPTION_GENERATOR_RETRIES = max(0, env_int("CAPTION_GENERATOR_RETRIES", 5))
+CAPTION_GENERATOR_RETRY_BACKOFF = max(
+    0.1, env_float("CAPTION_GENERATOR_RETRY_BACKOFF", 2.0)
+)
+CAPTION_GENERATOR_STARTUP_TIMEOUT_SEC = env_int(
+    "CAPTION_GENERATOR_STARTUP_TIMEOUT_SEC", 120
+)
+FACE_IDLE_TIMEOUT_SECONDS = env_int("FACE_IDLE_TIMEOUT_SECONDS", 60)
+CLIP_IDLE_TIMEOUT_SECONDS = env_int("CLIP_IDLE_TIMEOUT_SECONDS", 45)
 STATIC_URL = "api/static/"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = protected_media_root(BASE_DATA)
@@ -185,7 +204,7 @@ IMAGE_TAG = env_str("IMAGE_TAG")
 GIT_HASH = env_str("GIT_HASH")
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": datetime.timedelta(minutes=5),
+    "ACCESS_TOKEN_LIFETIME": datetime.timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": datetime.timedelta(days=env_int("REFRESH_TOKEN_DAYS", 7)),
 }
 
@@ -220,6 +239,7 @@ INSTALLED_APPS = [
     # only under DEBUG (librephotos/urls.py); the app has no models or
     # middleware, so a deployment only pays for the import.
     "drf_spectacular",
+    "django_pam",
     # OIDC / SSO via django-allauth. The generic openid_connect provider handles
     # any standards-compliant IdP (Keycloak, Authentik, Authelia, Zitadel, Google,
     # Azure, ...). Provider credentials live in the DB (admin-editable SocialApp),
@@ -233,14 +253,21 @@ INSTALLED_APPS = [
 
 SITE_ID = 1
 
+PAM_USERS = {
+    "is_active": True,
+    "is_staff": True,
+    "is_superuser": True,
+}
+
 Q_CLUSTER = {
     "name": "DjangORM",
+    "workers": max(1, env_int("Q_WORKERS", 2)),
     "queue_limit": 50,
-    "recycle": 50,
+    "recycle": env_int("Q_RECYCLE", 50),
     "timeout": 10000000,
     "retry": 20000000,
     "orm": "default",
-    "max_rss": 300000,
+    "max_rss": env_int("Q_MAX_RSS_KB", 300000),
     "poll": 1,
     # Schedules missed while the workers were busy (the minutely service
     # check, during a scan) are skipped rather than run back to back once the
@@ -294,10 +321,7 @@ CONSTANCE_ADDITIONAL_FIELDS = {
         "django.forms.fields.ChoiceField",
         {
             "widget": "django.forms.Select",
-            "choices": (
-                ("none", "None"),
-                ("lfm2_vl_450m", "LFM2.5-VL (default)"),
-            ),
+            "choices": (("none", "None"),),
         },
     ],
     "ocr_model": [
@@ -362,6 +386,11 @@ CONSTANCE_CONFIG = {
         "Comma delimited list of patterns to ignore (e.g. '@eaDir,#recycle' for synology devices)",
         str,
     ),
+    "SCAN_SKIP_EXTENSIONS": (
+        env_str("SCAN_SKIP_EXTENSIONS", ".pdf,.mkv,.avi,.wmv,.flv"),
+        "Comma delimited list of file extensions to exclude from scanning",
+        str,
+    ),
     "SCAN_MISSING_MAX_FRACTION": (
         0.5,
         "Largest share of a user's photos (0 to 1) a scan may flag as missing at"
@@ -387,19 +416,19 @@ CONSTANCE_CONFIG = {
         "map_tile_provider",
     ),
     "CAPTIONING_MODEL": (
-        "lfm2_vl_450m",
+        "None",
         "Captioning model",
-        "captioning_model",
+        "None",
     ),
     "OCR_MODEL": (
-        "None",
+        "ppocrv6_medium",
         "OCR model. OCR extracts ALL readable text from photos into the database"
         " as plaintext (including documents, receipts, IDs) — leave None if you do"
         " not want that.",
         "ocr_model",
     ),
     "FACE_RECOGNITION_MODEL": (
-        "buffalo_sc",
+        "buffalo_l",
         "Face recognition model",
         "face_recognition_model",
     ),
@@ -483,7 +512,7 @@ CORS_ALLOW_HEADERS = (
 CORS_EXPOSE_HEADERS = ("x-media-error",)
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]
+CORS_ALLOWED_ORIGINS = ["http://localhost:3000", f"http://{BACKEND_HOST}:3000"]
 
 DEFAULT_THROTTLE_RATES: dict[str, str] = {
     "password_reset": env_str("PASSWORD_RESET_THROTTLE_RATE", "5/hour"),
@@ -556,11 +585,10 @@ MIDDLEWARE = [
     "allauth.account.middleware.AccountMiddleware",
 ]
 
-# allauth adds its authentication backend alongside the default ModelBackend so
-# that regular username/password login keeps working (hybrid login — the
-# maintainer's call on #401). ModelBackend stays first so password auth is
-# unaffected.
+# PAM and allauth add their authentication backends alongside the default
+# ModelBackend so that regular username/password login keeps working.
 AUTHENTICATION_BACKENDS = [
+    "django_pam.auth.backends.PAMBackend",
     "django.contrib.auth.backends.ModelBackend",
     "allauth.account.auth_backends.AuthenticationBackend",
 ]
@@ -644,6 +672,7 @@ USE_TZ = True
 # comma-separated list (each with its scheme, e.g. https://photos.example.com).
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
+    f"http://{BACKEND_HOST}:3000",
     *env_list("CSRF_TRUSTED_ORIGINS"),
 ]
 

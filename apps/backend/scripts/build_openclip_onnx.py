@@ -240,7 +240,10 @@ def fail(message: str):
 # Inputs
 # --------------------------------------------------------------------------- #
 def readable(path: Path) -> bool:
+    import pillow_heif
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
     try:
         with Image.open(path) as image:
@@ -450,8 +453,11 @@ def check_tokenizer(tokenizer_json: Path, open_clip_tokenizer, prompts, context)
 
 
 def parity(model, transform, oc_tokenizer, cfg, out, images, prompts, tokenizer_json):
+    import pillow_heif
     import torch
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
     from service.tags.openclip.openclip import ClipTokenizer, Preprocess, prepare_image
 
@@ -508,7 +514,10 @@ def quantize_text(out: Path) -> Path:
 
 
 def embed_images(out: Path, images, cfg):
+    import pillow_heif
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
     from service.tags.openclip.openclip import Preprocess, prepare_image
 
@@ -571,7 +580,10 @@ def tag_agreement(image_embeddings, fp32_tags, quantized_tags, cfg, threshold=0.
 # --------------------------------------------------------------------------- #
 def golden_image(width, height):
     """The deterministic test image the unit test rebuilds."""
+    import pillow_heif
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
     y, x = np.mgrid[0:height, 0:width]
     arr = np.stack(

@@ -485,8 +485,11 @@ class ProductionSettingsThroughEnvTest(SimpleTestCase):
                     self._reload(**{name: "lots"})
 
     def test_worker_concurrency(self):
-        self.assertNotIn("workers", self._reload(WORKER_CONCURRENCY=None).Q_CLUSTER)
-        self.assertNotIn("workers", self._reload(WORKER_CONCURRENCY="").Q_CLUSTER)
+        self.assertEqual(2, self._reload(WORKER_CONCURRENCY=None).Q_CLUSTER["workers"])
+        self.assertEqual(2, self._reload(WORKER_CONCURRENCY="").Q_CLUSTER["workers"])
+        self.assertEqual(
+            4, self._reload(WORKER_CONCURRENCY=None, Q_WORKERS="4").Q_CLUSTER["workers"]
+        )
         self.assertEqual(3, self._reload(WORKER_CONCURRENCY="3").Q_CLUSTER["workers"])
 
     def test_backend_host_feeds_allowed_and_internal_hosts(self):

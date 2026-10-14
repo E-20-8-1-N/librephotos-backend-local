@@ -13,6 +13,8 @@ import hashlib
 import logging
 import os
 
+from django.db import transaction
+
 from api.mime import (
     IMAGE_EXTENSIONS,
     METADATA_EXTENSIONS,
@@ -72,12 +74,14 @@ def _as_copy(file: File, path: str) -> File:
     When the row's own path is gone, the copy takes the row over instead, so
     the photo keeps a file on disk.
     """
-    if file.missing or not os.path.exists(file.path):
-        logger.info("a copy takes over the missing file %s", file.hash)
-        file.take_over_copy(path)
+    with transaction.atomic():
+        file = File.objects.select_for_update().get(pk=file.pk)
+        if file.missing or not os.path.exists(file.path):
+            logger.info("a copy takes over the missing file %s", file.hash)
+            file.take_over_copy(path)
+        else:
+            FileCopy.objects.update_or_create(path=path, defaults={"file": file})
         return file
-    FileCopy.objects.update_or_create(path=path, defaults={"file": file})
-    return file
 
 
 def detect_file_type(path: str) -> int:

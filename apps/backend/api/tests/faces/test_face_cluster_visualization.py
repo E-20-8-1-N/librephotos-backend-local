@@ -235,8 +235,8 @@ class ClusterFacesPcaConstraintTest(TestCase):
         self.assertEqual(len(result["data"]), 3)
 
 
-class ClusterFacesPaginationTest(TestCase):
-    """Faces are read through a Paginator; every page must be consumed."""
+class ClusterFacesIteratorTest(TestCase):
+    """Every chunk of the streamed queryset must be consumed."""
 
     def setUp(self):
         self.user = create_test_user()
@@ -244,14 +244,14 @@ class ClusterFacesPaginationTest(TestCase):
         for i in range(6):
             create_test_face(photo=self.photo, encoding=enc_hex(i + 80))
 
-    def test_all_pages_are_walked(self):
-        with patch("api.faces.classify.Paginator") as paginator_cls:
-            from django.core.paginator import Paginator as RealPaginator
+    def test_all_chunks_are_walked(self):
+        from django.db.models import QuerySet
 
-            paginator_cls.side_effect = lambda qs, per_page: RealPaginator(qs, 2)
+        iterator = QuerySet.iterator
+        with patch.object(QuerySet, "iterator", autospec=True) as iterator_mock:
+            iterator_mock.side_effect = lambda qs, chunk_size: iterator(
+                qs, chunk_size=2
+            )
             with patch("api.faces.classify.make_pca", FakePCA):
                 result = cluster_faces(self.user)
         self.assertEqual(len(result["data"]), 6)
-        paginator_cls.assert_called_once()
-        # Page size used by the production code path.
-        self.assertEqual(paginator_cls.call_args[0][1], 5000)

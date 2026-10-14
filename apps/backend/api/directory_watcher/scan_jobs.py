@@ -10,15 +10,19 @@ import logging
 import os
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Any
 from uuid import UUID
 
 from django import db
 from django.conf import settings
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Q
 
+from api.classification.captioning import uses_caption_generator
 from api.directory_watcher.file_grouping import (
     get_file_grouping_key,
     get_sidecar_grouping_keys,
@@ -30,6 +34,7 @@ from api.directory_watcher.missing_guard import (
 )
 from api.directory_watcher.processing_jobs import (
     add_geolocation,
+    generate_im2txt_captions,
     generate_tags,
     probe_videos,
     scan_faces,
@@ -51,7 +56,14 @@ from api.jobs.queue import JobStep, enqueue_chain, enqueue_followup, enqueue_tas
 from api.metadata.reader import existing_sidecars
 from api.mime import VIDEO_EXTENSIONS, extension
 from api.models import File, FileCopy, LongRunningJob, Photo, Thumbnail, User
-from api.photos.files import detach_missing_files, missing_files
+from api.models.album_thing import (
+    AlbumThing,
+    album_thing_ids_for_photos,
+    refresh_album_thing_photo_counts,
+)
+from api.models.tag import refresh_tag_photo_counts, tag_ids_for_photos
+from api.photos.file_cleanup import delete_unreferenced_photo_files
+from api.photos.files import detach_missing_files, missing_files, missing_on_disk
 from api.photos.media_files import is_metadata
 from api.runtime.features import feature_enabled
 from api.search.embedding_jobs import batch_calculate_clip_embedding
@@ -68,6 +80,7 @@ logger = logging.getLogger(__name__)
 # per-batch query cost stops shrinking, while keeping the transient set tiny
 # (well under 2 MB) regardless of total library size.
 _PATH_PREFETCH_BATCH = 10000
+_BULK_DELETE_BATCH_SIZE = 500
 
 # A file group: its (directory, basename) key and the paths in it.
 _FileGroup = tuple[tuple[str, str], list[str]]
@@ -258,7 +271,7 @@ def _partition_scan_paths(
     """
     file_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
     sidecar_paths: list[str] = []
-    for path in photo_list:
+    for path in dict.fromkeys(photo_list):
         if is_metadata(path):
             sidecar_paths.append(path)
         else:
@@ -327,6 +340,8 @@ def _queue_scan_work(
     full_scan: bool,
     last_scan: LongRunningJob | None,
     job_id: UUID | str,
+    inline_image_processing: bool = False,
+    inline_workers: int = 4,
 ) -> None:
     """Queue the file groups and the sidecars whose photo is not in this scan.
 
@@ -334,6 +349,26 @@ def _queue_scan_work(
     remaining ones have nothing to wait for and are queued directly.
     """
     image_group_id = str(uuid.uuid4())
+    if inline_image_processing:
+        # SQLite serializes writes; separate concurrent connections would only
+        # contend. PostgreSQL retains the fork's concurrent thumbnail pipeline.
+        workers = 1 if db.connection.vendor == "sqlite" else max(1, inline_workers)
+        groups = _videos_first(groups_to_process)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for start in range(0, len(groups), workers):
+                if is_job_cancelled(job_id):
+                    return
+                futures = [
+                    pool.submit(_process_group_inline, user, paths, job_id)
+                    for _, paths in groups[start : start + workers]
+                ]
+                for future in futures:
+                    future.result()
+        for path in metadata_paths:
+            if is_job_cancelled(job_id):
+                return
+            handle_new_image(user, path, job_id)
+        return
     for idx, (_, paths) in enumerate(_videos_first(groups_to_process)):
         if _queuing_cancelled(idx, job_id):
             return
@@ -348,6 +383,13 @@ def _queue_scan_work(
         if _queuing_cancelled(idx, job_id):
             return
         photo_scanner(user, last_scan, full_scan, path, job_id)
+
+
+def _process_group_inline(user: User, paths: list[str], job_id: UUID | str) -> None:
+    try:
+        handle_file_group(user, paths, job_id)
+    finally:
+        db.connections.close_all()
 
 
 def _queuing_cancelled(idx: int, job_id: UUID | str) -> bool:
@@ -371,6 +413,7 @@ def _remember_followups(
     scan_directory: str,
     scan_files: list[str],
     skipped_directories: bool = False,
+    force_im2txt: bool = False,
 ) -> None:
     """Store what the follow-up jobs and later scans need.
 
@@ -397,6 +440,7 @@ def _remember_followups(
         result[LongRunningJob.LIBRARY_SCAN] = True
     result[_FOLLOWUPS_KEY] = {
         "full_scan": bool(full_scan),
+        "force_im2txt": force_im2txt,
         # if the scan type is not the default user scan directory, or if it is
         # specified as only scanning specific files, there is no need to rescan
         # fully for missing photos.
@@ -431,10 +475,17 @@ def queue_scan_followups(job_id: UUID | str) -> None:
     )
     logger.info("Added %s photos", added_photo_count)
 
-    _queue_followup_jobs(user, options["full_scan"], options["scan_missing_photos"])
+    _queue_followup_jobs(
+        user,
+        options["full_scan"],
+        options["scan_missing_photos"],
+        options.get("force_im2txt", False),
+    )
 
 
-def _queue_followup_jobs(user: User, full_scan: bool, scan_missing: bool) -> None:
+def _queue_followup_jobs(
+    user: User, full_scan: bool, scan_missing: bool, force_im2txt: bool = False
+) -> None:
     """Queue the jobs that run once the scan's own work is done."""
     if scan_missing:
         enqueue_followup(
@@ -459,12 +510,18 @@ def _queue_followup_jobs(user: User, full_scan: bool, scan_missing: bool) -> Non
     # photos to it have to agree, or a switch flipped between two reads leaves
     # photos with neither tags nor search embeddings.
     tags_on = semantic_shares_tagger()
-    if tags_on:
+    if tags_on or (
+        uses_caption_generator() and feature_enabled("SCENE_CLASSIFICATION")
+    ):
         enqueue_followup(
             user,
             LongRunningJob.JOB_GENERATE_TAGS,
             generate_tags,
             user,
+        )
+    if force_im2txt and feature_enabled("IMAGE_CAPTIONING"):
+        enqueue_followup(
+            user, LongRunningJob.JOB_GENERATE_IM2TXT, generate_im2txt_captions, user
         )
     if feature_enabled("REVERSE_GEOCODING"):
         enqueue_followup(
@@ -504,6 +561,9 @@ def scan_photos(
     job_id: UUID | str,
     scan_directory: str = "",
     scan_files: list[str] | None = None,
+    force_im2txt: bool = False,
+    inline_image_processing: bool = False,
+    inline_workers: int = 4,
 ) -> None:
     """
     Two-phase scan to avoid race conditions with RAW+JPEG grouping.
@@ -580,7 +640,13 @@ def scan_photos(
         # Each group = one Photo with potentially multiple file variants
         total_groups = len(groups_to_process) + len(metadata_paths)
         _remember_followups(
-            lrj, user, full_scan, scan_directory, scan_files, bool(skipped)
+            lrj,
+            user,
+            full_scan,
+            scan_directory,
+            scan_files,
+            bool(skipped),
+            force_im2txt,
         )
         lrj.update_progress(current=0, target=total_groups)
         record_skipped_directories(job_id, skipped)
@@ -597,7 +663,14 @@ def scan_photos(
         # Process groups sequentially to avoid race conditions
         # Each group creates one Photo with all file variants
         _queue_scan_work(
-            user, groups_to_process, metadata_paths, full_scan, last_scan, job_id
+            user,
+            groups_to_process,
+            metadata_paths,
+            full_scan,
+            last_scan,
+            job_id,
+            inline_image_processing,
+            inline_workers,
         )
 
         logger.info("Scanned %s files in : %s", files_found, scan_directory)
@@ -620,7 +693,7 @@ def scan_photos(
 
 def scan_missing_photos(user: User, job_id: UUID) -> None:
     """
-    Flag the photos whose files no longer exist on disk.
+    Delete photos whose media files no longer exist, and clean their thumbnails.
 
     Every photo is checked before anything changes: when the scan directory
     looks unmounted, or too much of the library would lose all its files
@@ -655,6 +728,7 @@ def scan_missing_photos(user: User, job_id: UUID) -> None:
         existing_photos = (
             Photo.objects.owned_by(user)
             .order_by("image_hash")
+            .select_related("main_file")
             .prefetch_related("files")
         )
         paginator = Paginator(existing_photos, 5000)
@@ -662,6 +736,7 @@ def scan_missing_photos(user: User, job_id: UUID) -> None:
         lrj.update_progress(current=0, target=paginator.num_pages + 1)
         # Photo id -> the ids of its files that are gone.
         missing: dict[UUID, list[str]] = {}
+        to_delete: list[UUID] = []
         photos_with_files = 0
         would_lose_all = 0
         for page in range(1, paginator.num_pages + 1):
@@ -669,14 +744,20 @@ def scan_missing_photos(user: User, job_id: UUID) -> None:
                 logger.info("Scan missing photos job cancelled")
                 return
             for existing_photo in paginator.page(page).object_list:
-                file_count = len(existing_photo.files.all())
-                if not file_count:
-                    continue
-                photos_with_files += 1
+                has_media = (
+                    existing_photo.main_file is not None
+                    and existing_photo.main_file.type != File.METADATA_FILE
+                ) or any(
+                    file.type != File.METADATA_FILE
+                    for file in existing_photo.files.all()
+                )
+                photos_with_files += has_media
                 gone = missing_files(existing_photo)
                 if gone:
                     missing[existing_photo.pk] = [file.pk for file in gone]
-                    would_lose_all += len(gone) == file_count
+                if missing_on_disk(existing_photo):
+                    to_delete.append(existing_photo.pk)
+                    would_lose_all += has_media
             update_scan_counter(job_id)
 
         problem = too_many_missing(would_lose_all, photos_with_files)
@@ -691,11 +772,53 @@ def scan_missing_photos(user: User, job_id: UUID) -> None:
             return
 
         _detach_missing(missing, job_id)
+        deleted_count = 0
+        for start in range(0, len(to_delete), _BULK_DELETE_BATCH_SIZE):
+            if is_job_cancelled(job_id):
+                return
+            deleted_count += _bulk_delete_photos(
+                to_delete[start : start + _BULK_DELETE_BATCH_SIZE], user
+            )
+        if not lrj.set_result({"deleted_photos": deleted_count}):
+            return
         update_scan_counter(job_id)
         logger.info("Finished checking paths for missing photos")
     except Exception as e:
         logger.exception("An error occurred: ")
         lrj.fail(error=e)
+
+
+def _bulk_delete_photos(photo_ids: Sequence[UUID], user: User) -> int:
+    """Delete a user's missing Photo rows by primary key and clean derived files.
+
+    Recheck disk presence so a file that reappeared while the scan ran survives.
+    Cascades remove related rows; counts/covers and disk cleanup need explicit
+    refreshes, including thumbnails left by a scan with no Thumbnail row.
+    """
+    with transaction.atomic():
+        candidates = (
+            Photo.objects.owned_by(user)
+            .filter(pk__in=photo_ids)
+            .select_related("main_file")
+            .prefetch_related("files")
+        )
+        missing = [photo for photo in candidates if missing_on_disk(photo)]
+        if not missing:
+            return 0
+        photos = Photo.objects.owned_by(user).filter(
+            pk__in=[photo.pk for photo in missing]
+        )
+        album_ids = album_thing_ids_for_photos(photos)
+        tag_ids = tag_ids_for_photos(photos)
+        photos.delete()
+        refresh_album_thing_photo_counts(album_ids)
+        for album in AlbumThing.objects.filter(pk__in=album_ids):
+            album.update_default_cover_photo()
+        refresh_tag_photo_counts(tag_ids)
+        for photo_hash in {photo.image_hash for photo in missing}:
+            transaction.on_commit(partial(delete_unreferenced_photo_files, photo_hash))
+    logger.info("Deleted %s missing photos for user %s", len(missing), user.pk)
+    return len(missing)
 
 
 def _detach_missing(missing: dict[UUID, list[str]], job_id: UUID) -> None:

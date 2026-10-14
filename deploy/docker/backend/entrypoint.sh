@@ -20,6 +20,30 @@ fi
 export OPENBLAS_NUM_THREADS=1
 export OPENBLAS_MAIN_FREE=1
 
+# --- Memory optimization ---
+# Force glibc to return freed memory to the OS more aggressively
+export MALLOC_TRIM_THRESHOLD_=65536
+export MALLOC_MMAP_THRESHOLD_=65536
+# Limit PyTorch/MKL threads to reduce per-thread memory overhead.
+# With multiple subprocess services (clip, face, thumbnail, exif,
+# image_similarity) + gunicorn + qcluster, every extra thread per
+# process multiplies RSS and PID count. 1 is the safe default for
+# CPU-only deployments; override per-service if needed.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+export TORCH_NUM_THREADS=${TORCH_NUM_THREADS:-1}
+# ONNX Runtime (insightface) has its own thread pools.
+export ORT_NUM_THREADS=${ORT_NUM_THREADS:-1}
+export NUMEXPR_MAX_THREADS=${NUMEXPR_MAX_THREADS:-1}
+# Disable PyTorch gradient tracking globally (inference only)
+if [[ "${DISABLE_CUDA_CACHE:-0}" = "1" ]]; then
+  export PYTORCH_NO_CUDA_MEMORY_CACHING=1
+fi
+
+set -e
+
+echo "LibrePhotos starting..."
+
 # GPU image: show the GPU the container got and default to the first one.
 # A CUDA_VISIBLE_DEVICES set on the container wins.
 if command -v nvidia-smi >/dev/null 2>&1; then

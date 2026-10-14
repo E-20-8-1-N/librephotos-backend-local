@@ -14,6 +14,7 @@ from constance import config as site_config
 from django.db.models import F, Q
 from django.utils import timezone
 
+from api.mime import extension
 from api.models import LongRunningJob
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,10 @@ def is_hidden(path: str) -> bool:
     A dot-file is hidden everywhere; on Windows so is anything carrying the
     hidden attribute (desktop.ini, Thumbs.db, files hidden in Explorer).
     """
-    if os.path.basename(os.path.abspath(path)).startswith("."):
+    name = os.path.basename(os.path.abspath(path))
+    if name == ".cetapod":
+        return False
+    if name.startswith("."):
         return True
     return _IS_WINDOWS and _has_hidden_attribute(path)
 
@@ -98,6 +102,15 @@ class SkippedDirectory(NamedTuple):
 
     path: str
     error: str
+
+
+def get_skipped_scan_extensions() -> set[str]:
+    """Read and normalize the exclusion setting once per directory walk."""
+    return {
+        value if value.startswith(".") else f".{value}"
+        for item in site_config.SCAN_SKIP_EXTENSIONS.split(",")
+        if (value := item.strip().lower())
+    }
 
 
 def walk_directory(directory: str, callback: list[str]) -> list[SkippedDirectory]:
@@ -158,6 +171,7 @@ class _DirectoryWalk:
     def __init__(self, callback: list[str], skip_list: list[str]) -> None:
         self.callback = callback
         self.skip_list = skip_list
+        self.skipped_extensions = get_skipped_scan_extensions()
         # The directories on the current path, to cut symlink loops.
         self.ancestors: set[_DirectoryIdentity] = set()
         self.skipped: list[SkippedDirectory] = []
@@ -190,8 +204,13 @@ class _DirectoryWalk:
                     continue
                 if os.path.isdir(fpath):
                     self.walk_subdirectory(fpath)
-                elif os.path.isfile(fpath):
+                elif (
+                    os.path.isfile(fpath)
+                    and extension(fpath) not in self.skipped_extensions
+                ):
                     self.callback.append(fpath)
+                elif os.path.isfile(fpath):
+                    continue
                 else:
                     logger.warning(
                         "skipping %s: neither a file nor a directory (broken symlink?)",
@@ -209,8 +228,9 @@ def walk_files(scan_files: list[str], callback: list[str]) -> None:
         scan_files: List of file paths to check
         callback: List to append valid file paths to
     """
+    skipped_extensions = get_skipped_scan_extensions()
     for fpath in scan_files:
-        if os.path.isfile(fpath):
+        if os.path.isfile(fpath) and extension(fpath) not in skipped_extensions:
             callback.append(fpath)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -101,6 +102,9 @@ def generate_photo_caption(caption: PhotoCaption, commit: bool = True) -> bool:
             logger.info("Generating captions is disabled")
             return False
 
+        if uses_caption_generator():
+            return generate_external_caption(caption, commit)
+
         llm_settings = User.objects.get(username=caption.photo.owner).llm_settings
         context = caption.caption_context(llm_settings)
         prompt = caption.caption_prompt(context)
@@ -116,3 +120,32 @@ def generate_photo_caption(caption: PhotoCaption, commit: bool = True) -> bool:
     except Exception:
         logger.exception("could not generate caption for image %s", image_path)
         return False
+
+
+def uses_caption_generator() -> bool:
+    """Whether captions and Things are supplied by the external generator."""
+    from constance import config as site_config
+
+    return site_config.CAPTIONING_MODEL == "caption_generator"
+
+
+def generate_external_caption(caption: PhotoCaption, commit: bool = True) -> bool:
+    """Store the caption and Things together, respecting both feature switches."""
+    from api.classification import caption_generator
+
+    image_path = caption.resolve_thumbnail_path()
+    if image_path is None:
+        return False
+    text, tags = caption_generator.generate(
+        image_path, os.path.splitext(image_path)[1].lower()
+    )
+    captions = dict(caption.captions_json or {})
+    if text and feature_enabled("IMAGE_CAPTIONING"):
+        captions["im2txt"] = text
+    caption.captions_json = captions
+    if feature_enabled("SCENE_CLASSIFICATION"):
+        caption.store_caption_generator_tags(tags, commit=False)
+    caption.recreate_search_captions()
+    if commit:
+        caption.save()
+    return True

@@ -109,15 +109,23 @@ class FavoriteMinRatingTest(_ReloadMixin, SimpleTestCase):
 
 
 class CsrfTrustedOriginsParsingTest(_ReloadMixin, SimpleTestCase):
-    def test_unset_keeps_only_the_dev_origin(self):
-        self.assertEqual(["http://localhost:3000"], self._reload().CSRF_TRUSTED_ORIGINS)
+    def test_unset_keeps_the_dev_and_backend_origins(self):
+        self.assertEqual(
+            ["http://localhost:3000", "http://backend:3000"],
+            self._reload().CSRF_TRUSTED_ORIGINS,
+        )
 
     def test_single_origin(self):
         origins = self._reload(
             CSRF_TRUSTED_ORIGINS="https://photos.example.com"
         ).CSRF_TRUSTED_ORIGINS
         self.assertEqual(
-            ["http://localhost:3000", "https://photos.example.com"], origins
+            [
+                "http://localhost:3000",
+                "http://backend:3000",
+                "https://photos.example.com",
+            ],
+            origins,
         )
 
     def test_comma_separated_list(self):
@@ -127,6 +135,7 @@ class CsrfTrustedOriginsParsingTest(_ReloadMixin, SimpleTestCase):
         self.assertEqual(
             [
                 "http://localhost:3000",
+                "http://backend:3000",
                 "https://a.example.com",
                 "https://b.example.com",
             ],

@@ -17,10 +17,13 @@ import numbers
 import re
 import uuid
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from api.models.tag import link_tags_from_keywords
 from api.models.user import User, get_deleted_user
@@ -106,6 +109,18 @@ def _text_value(value: object) -> str | None:
     number (a description of "2024" comes back as the int 2024), so numbers are
     turned back into text rather than dropped. Anything else is ignored.
     """
+    if isinstance(value, dict):
+        candidates = [value.get(key) for key in ("x-default", "en-US", "en", "und")]
+        return next(
+            (
+                text
+                for item in [*candidates, *value.values()]
+                if (text := _text_value(item))
+            ),
+            None,
+        )
+    if isinstance(value, list):
+        return next((text for item in value if (text := _text_value(item))), None)
     if isinstance(value, bool):
         return None
     if isinstance(value, numbers.Number):
@@ -113,6 +128,31 @@ def _text_value(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     return value.strip() or None
+
+
+def _file_datetime(value: object) -> datetime | None:
+    """A file modification instant, accepting ISO or ExifTool's date spelling."""
+    parsed: datetime | None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = _text_value(value)
+        if text is None:
+            return None
+        try:
+            parsed = parse_datetime(text)
+        except ValueError:
+            parsed = None
+        if parsed is None:
+            for format in ("%Y:%m:%d %H:%M:%S%z", "%Y:%m:%d %H:%M:%S"):
+                try:
+                    parsed = datetime.strptime(text, format)
+                    break
+                except ValueError:
+                    continue
+    if parsed is None:
+        return None
+    return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
 
 
 # EXIF 2.32 codes of the enums the exif service reads as numbers (-n), named
@@ -255,6 +295,7 @@ CAMERA_PLACEHOLDER_DESCRIPTIONS = frozenset(
 DESCRIPTION_SOURCES = (
     "xmp_description",
     "xmp_description_any_language",
+    "keys_description",
     "iptc_caption",
     "image_description",
 )
@@ -327,6 +368,8 @@ def _merge_keywords(*values: object) -> list[str]:
         else:
             entries = [value]
         for entry in entries:
+            if isinstance(entry, dict):
+                continue
             text = entry if isinstance(entry, str) else _text_value(entry)
             if text is not None:
                 merged.add(text)
@@ -604,6 +647,10 @@ class PhotoMetadata(models.Model):
             metadata.shutter_speed = shutter_speed
 
         PhotoMetadata._apply_camera_fields(metadata, values)
+        _assign_string(metadata, "timezone_offset", values.get("timezone_offset"))
+        modified = _file_datetime(values.get("file_modify_date"))
+        if modified is not None:
+            metadata.date_modified = modified
 
         subsec_time_original = values["subsec_time_original"]
         if subsec_time_original:

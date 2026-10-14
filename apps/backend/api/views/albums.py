@@ -202,7 +202,7 @@ def _get_active_tag_thing_types() -> list[str]:
     """Return the AlbumThing thing_type values of the tagger's albums."""
     from api.search.semantic import TAG_THING_TYPE
 
-    return [TAG_THING_TYPE]
+    return [TAG_THING_TYPE, "caption_generator_tag"]
 
 
 def _thing_has_visible_photo() -> Exists:

@@ -335,9 +335,15 @@ urlpatterns = [
     re_path(r"^api/clusterfaces/?$", dataviz.ClusterFaceView.as_view()),
     re_path(r"^api/socialgraph/?$", dataviz.SocialGraphView.as_view()),
     re_path(r"^api/scanphotos/?$", scan_triggers.ScanPhotosView.as_view()),
-    # Two URLs, one view, on purpose: #2220 keeps this alias because it is documented.
-    re_path(r"^api/scanuploadedphotos/?$", scan_triggers.FullScanPhotosView.as_view()),
+    re_path(r"^api/scanuploadedphotos/?$", scan_triggers.ScanPhotosView.as_view()),
     re_path(r"^api/fullscanphotos/?$", scan_triggers.FullScanPhotosView.as_view()),
+    re_path(
+        r"^api/backendscanphotos/?$", scan_triggers.BackendScanPhotosView.as_view()
+    ),
+    re_path(
+        r"^api/backenddeletemissingphotos/?$",
+        scan_triggers.BackendDeleteMissingPhotosView.as_view(),
+    ),
     re_path(r"^api/scanfaces/?$", faces.ScanFacesView.as_view()),
     re_path(
         r"^api/deletemissingphotos/?$", scan_triggers.DeleteMissingPhotosView.as_view()

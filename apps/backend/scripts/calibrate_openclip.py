@@ -157,7 +157,10 @@ FAMILIES = (
 
 
 def collect(directory):
+    import pillow_heif
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
     paths = []
     for path in sorted(Path(directory).rglob("*")):
@@ -331,8 +334,9 @@ def main(argv=None):
     if args.model_dir:
         os.environ["OPENCLIP_MODEL_DIR"] = args.model_dir
 
-    from api.search import semantic
     from service.tags.openclip import openclip
+
+    from api.search import semantic
 
     reference = json.loads(Path(args.reference).read_text()) if args.reference else {}
 

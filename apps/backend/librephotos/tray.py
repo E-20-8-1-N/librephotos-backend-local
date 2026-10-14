@@ -18,8 +18,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import pillow_heif
     import pystray
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
 APP_NAME = "LibrePhotos"
 # Windows cuts a notification-area tooltip at 127 characters.
@@ -30,7 +33,10 @@ _SHOWN_TIMEOUT_SECONDS = 5.0
 
 def tray_image(candidates: tuple[str, ...]) -> Image.Image:
     """The first icon file that exists, or a plain blue square."""
+    import pillow_heif
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
     for candidate in candidates:
         if os.path.exists(candidate):

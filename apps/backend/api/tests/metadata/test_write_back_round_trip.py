@@ -495,6 +495,68 @@ class CaptionRoundTripTest(RealExifToolTestCase):
         self.assertEqual(CAPTION, self._description_the_scan_reads(photo))
         self.assertWritesLanded(expected=1)
 
+    def test_metadata_api_caption_reaches_the_native_media_description(self):
+        for video, native_tag in (
+            (False, Tags.IMAGE_DESCRIPTION),
+            (True, Tags.KEYS_DESCRIPTION),
+        ):
+            with self.subTest(video=video):
+                self.exiftool.writes.clear()
+                path = (
+                    self.make_video("metadata-caption")
+                    if video
+                    else self.make_image(".jpg")
+                )
+                photo = self._photo(path, MEDIA_FILE, video=video)
+                client = APIClient()
+                client.force_authenticate(photo.owner)
+                with (
+                    patch("api.metadata.jobs.enqueue_task", run_now),
+                    self.captureOnCommitCallbacks(execute=True),
+                ):
+                    response = client.patch(
+                        f"/api/photos/{photo.pk}/metadata/",
+                        {"caption": CAPTION},
+                        format="json",
+                    )
+                self.assertEqual(200, response.status_code, response.content)
+                self.assertEqual(CAPTION, self.read_tags(path, native_tag)[native_tag])
+                self.assertEqual(path, self.exiftool.writes[0].target)
+                self.assertFalse(os.path.exists(self.sidecar_of(path)))
+                self.assertWritesLanded(expected=1)
+
+    def test_lightbox_caption_reaches_and_clears_the_native_media_description(self):
+        for video, native_tag in (
+            (False, Tags.IMAGE_DESCRIPTION),
+            (True, Tags.KEYS_DESCRIPTION),
+        ):
+            with self.subTest(video=video):
+                self.exiftool.writes.clear()
+                path = (
+                    self.make_video("lightbox-caption")
+                    if video
+                    else self.make_image(".jpg")
+                )
+                photo = self._photo(path, MEDIA_FILE, video=video)
+                client = APIClient()
+                client.force_authenticate(photo.owner)
+                for text in (CAPTION, ""):
+                    with (
+                        patch("api.metadata.jobs.enqueue_task", run_now),
+                        self.captureOnCommitCallbacks(execute=True),
+                    ):
+                        response = client.post(
+                            "/api/photosedit/savecaption/",
+                            {"image_hash": photo.image_hash, "caption": text},
+                            format="json",
+                        )
+                    self.assertEqual(200, response.status_code, response.content)
+                    self.assertEqual(
+                        text or None, self.read_tags(path, native_tag)[native_tag]
+                    )
+                self.assertFalse(os.path.exists(self.sidecar_of(path)))
+                self.assertWritesLanded(expected=2)
+
     def test_a_bulk_caption_is_one_job(self):
         user = create_test_user(save_metadata_to_disk=SIDECAR)
         photos = [
@@ -522,6 +584,22 @@ class CaptionRoundTripTest(RealExifToolTestCase):
         self.assertWritesLanded(expected=2)
         for photo in photos:
             self.assertEqual(CAPTION, self._description_the_scan_reads(photo))
+
+    def test_video_caption_is_written_to_keys_and_read_by_the_scan(self):
+        path = self.make_video("caption")
+        photo = self.photo_for(
+            path, create_test_user(save_metadata_to_disk=MEDIA_FILE), video=True
+        )
+        with (
+            patch("api.metadata.jobs.enqueue_task", run_now),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            edits.set_caption(photo, CAPTION, photo.owner)
+        self.assertEqual(
+            CAPTION, self.read_tags(path, Tags.KEYS_DESCRIPTION)[Tags.KEYS_DESCRIPTION]
+        )
+        self.assertEqual(CAPTION, self._description_the_scan_reads(photo))
+        self.assertWritesLanded(expected=1)
 
     @contextmanager
     def _original_kept(self, path):

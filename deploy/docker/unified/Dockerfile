@@ -5,14 +5,14 @@ ARG BASE_TAG=dev
 # First stage: build the frontend. The same stage as in
 # deploy/docker/frontend/Dockerfile; keep the two identical
 # (apps/backend/api/tests/infra/test_deploy_images.py).
-FROM node:24-slim as builder
+FROM node:24-slim AS builder
 
 RUN npm config set fetch-retry-maxtimeout 60000
 
 # Mirror the repo layout: the frontend compiles the shared API client from
 # ../../packages/api-client (vite.config.ts / tsconfig.json aliases).
 WORKDIR /usr/src/app/apps/frontend
-ENV CLI_WIDTH 80
+ENV CLI_WIDTH=80
 
 # Copy manifests first for better layer caching
 COPY apps/frontend/package.json apps/frontend/yarn.lock ./
@@ -26,12 +26,26 @@ ARG GIT_HASH=unknown
 RUN yarn run build && echo "${GIT_HASH}" > dist/git_hash.txt
 
 # Second stage: Build the backend with frontend included
-FROM reallibrephotos/librephotos-base:${BASE_TAG}
+FROM cetapod/librephotos_backend_base:latest
 
 ARG DEBUG
 ARG MLVALIDATION
 ARG IMAGE_TAG
-ENV IMAGE_TAG ${IMAGE_TAG}
+ENV IMAGE_TAG=${IMAGE_TAG}
+
+# Install necessary packages
+RUN apt-get update && apt-get install -y \
+    nano \
+    vim
+
+# Install HEIF support image libraries
+RUN apt-get install -y \
+    libheif1 \
+    libde265-0 \
+    libde265-dev \
+    x265 \
+    libvips \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /code
 

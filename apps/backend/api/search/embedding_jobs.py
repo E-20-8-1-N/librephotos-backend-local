@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Iterable
 
 from django.db.models import Q, QuerySet
+from django.utils import timezone
 
 from api.jobs.queue import enqueue_followup
 from api.models.long_running_job import JobCancelledError, LongRunningJob
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 INDEX_REBUILD_EVERY = 2000
 
 # Photos per sidecar request.
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 
 
 def photos_missing_clip_embeddings(user: User) -> QuerySet[Photo]:
@@ -67,6 +68,7 @@ def store_clip_embeddings(objs: list[Photo], with_tags: bool = False) -> None:
     imgs = [obj.thumbnail.thumbnail_big.path for obj in objs]
     imgs_emb, magnitudes, tags = create_clip_embeddings(imgs, with_tags=with_tags)
     tags = tags or [None] * len(objs)
+    updated: list[Photo] = []
 
     for obj, img_emb, magnitude, photo_tags in zip(objs, imgs_emb, magnitudes, tags):
         if img_emb is None:
@@ -79,21 +81,22 @@ def store_clip_embeddings(objs: list[Photo], with_tags: bool = False) -> None:
         obj.clip_embeddings = img_emb.tolist()
         obj.clip_embeddings_magnitude = magnitude
         obj.clip_embeddings_model = OPENCLIP
-        # Only these columns: ``obj`` was loaded before the sidecar call, and a
-        # whole-row save would put back whatever the rest of the row held then.
-        obj.save(
-            update_fields=[
-                "clip_embeddings",
-                "clip_embeddings_magnitude",
-                "clip_embeddings_model",
-                "last_modified",
-            ]
-        )
+        obj.last_modified = timezone.now()
+        updated.append(obj)
         if photo_tags is not None:
             try:
                 _store_tags_if_missing(obj, photo_tags)
             except Exception:
                 logger.exception("Could not store the tags of %s", obj.image_hash)
+    Photo.objects.bulk_update(
+        updated,
+        [
+            "clip_embeddings",
+            "clip_embeddings_magnitude",
+            "clip_embeddings_model",
+            "last_modified",
+        ],
+    )
 
 
 def _rebuild_index_while_converting(user: User) -> None:

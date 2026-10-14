@@ -13,9 +13,12 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+import pillow_heif
 from PIL import Image
 
 from api.lazy_import import LazyModule
+
+pillow_heif.register_heif_opener()
 
 # imagehash brings numpy and scipy along; only the scan and duplicate
 # detection hash, not the API server that imports this module.

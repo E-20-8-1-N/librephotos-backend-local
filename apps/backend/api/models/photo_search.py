@@ -44,7 +44,11 @@ def place_label(geolocation_json: dict[str, Any] | None) -> str:
     if not geolocation_json:
         return ""
     if "address" in geolocation_json:
-        return str(geolocation_json["address"])
+        location = str(geolocation_json["address"])
+        for place in geolocation_json.get("places") or []:
+            if place and str(place) not in location:
+                location = ", ".join(part for part in (location, str(place)) if part)
+        return location
     features = geolocation_json.get("features") or []
     return ", ".join(
         str(feature["text"]) for feature in features if feature.get("text")
@@ -100,6 +104,10 @@ class PhotoSearch(models.Model):
                 tags = (captions_json.get(OPENCLIP) or {}).get("tags", [])
                 if tags:
                     search_captions += " ".join(tags) + " "
+
+                generated_tags = captions_json.get("im2txt_tag", "")
+                if generated_tags:
+                    search_captions += generated_tags + " "
 
                 user_caption = captions_json.get("user_caption", "")
                 if user_caption:

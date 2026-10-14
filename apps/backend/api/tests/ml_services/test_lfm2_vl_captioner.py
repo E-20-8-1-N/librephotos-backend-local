@@ -22,7 +22,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from django.test import SimpleTestCase
 from PIL import Image
-
 from service.image_captioning import lfm2_vl as lfm_module
 from service.image_captioning.lfm2_vl import (
     Lfm2VlCaptioner,

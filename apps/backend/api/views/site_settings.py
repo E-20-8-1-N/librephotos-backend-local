@@ -35,6 +35,7 @@ SETTING_KEYS = (
     "ALLOW_REGISTRATION",
     "ALLOW_UPLOAD",
     "SKIP_PATTERNS",
+    "SCAN_SKIP_EXTENSIONS",
     "MAP_API_PROVIDER",
     "MAP_API_KEY",
     "MAP_TILE_PROVIDER",
@@ -123,6 +124,7 @@ class SiteSettingsView(APIView):
         out["allow_registration"] = config["ALLOW_REGISTRATION"]
         out["allow_upload"] = config["ALLOW_UPLOAD"]
         out["skip_patterns"] = config["SKIP_PATTERNS"]
+        out["scan_skip_extensions"] = config["SCAN_SKIP_EXTENSIONS"]
         out["heavyweight_process"] = 0
         out["map_api_provider"] = config["MAP_API_PROVIDER"]
         # This GET is anonymous (the login page reads it), but the key is the

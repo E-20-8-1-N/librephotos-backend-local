@@ -46,6 +46,9 @@ LEGACY_RE_ROUTES = frozenset(
         "^api/auth/token/refresh/?$",
         "^api/autoalbumgen/?$",
         "^api/autoalbumtitlegen/?$",
+        # Existing path-based integration routes imported from dev-upstream.
+        "^api/backendscanphotos/?$",
+        "^api/backenddeletemissingphotos/?$",
         "^api/classifymedia/?$",
         "^api/clusterfaces/?$",
         "^api/defaultburstrules/?$",
@@ -290,7 +293,7 @@ CLIENT_PATHS = {
 
 
 # Two URLs, one view, kept on purpose: #2220 documents the second name.
-LEGACY_ALIASES = (("/api/scanuploadedphotos/", "/api/fullscanphotos/"),)
+LEGACY_ALIASES = (("/api/scanuploadedphotos/", "/api/scanphotos/"),)
 
 # A slash form the DRF router answers first, as it did before the anchoring: the
 # router's photos/<pk>/ route takes /api/photos/download/. Kept as it was; a

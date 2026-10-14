@@ -7,6 +7,7 @@ from geopy.location import Location
 from .parsers.mapbox import parse as parse_mapbox
 from .parsers.nominatim import parse as parse_nominatim
 from .parsers.opencage import parse as parse_opencage
+from .parsers.photon import parse as parse_photon
 from .parsers.tomtom import parse as parse_tomtom
 
 GEOCODE_TIMEOUT_SECONDS = 10
@@ -49,6 +50,13 @@ def _get_config() -> dict[str, _ProviderConfig]:
                 "timeout": GEOCODE_TIMEOUT_SECONDS,
             },
             "parser": parse_nominatim,
+        },
+        "photon": {
+            "geocode_args": {
+                "domain": "photon.komoot.io",
+                "timeout": GEOCODE_TIMEOUT_SECONDS,
+            },
+            "parser": parse_photon,
         },
         "opencage": {
             "geocode_args": {

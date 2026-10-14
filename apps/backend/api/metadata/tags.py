@@ -47,6 +47,8 @@ class Tags:
     GPS_COORDINATES_ITEM_LIST = "ItemList:GPSCoordinates"
     GPS_DATE_TIME = "Composite:GPSDateTime"
     FILE_SIZE = "File:FileSize"
+    FILE_MODIFY_DATE = "File:FileModifyDate"
+    TIMEZONE_OFFSET = "EXIF:OffsetTimeOriginal"
     FSTOP = "EXIF:FNumber"
     EXPOSURE_TIME = "EXIF:ExposureTime"
     # EXIF tag 0x8827 is "ISO" to ExifTool; "EXIF:ISOSpeedRatings" (its EXIF
@@ -96,7 +98,8 @@ class Tags:
     # Older captions: the IPTC record (Photoshop, Picasa, newsroom tools) and
     # the EXIF one, which some cameras fill with a placeholder.
     IPTC_CAPTION = "IPTC:Caption-Abstract"
-    IMAGE_DESCRIPTION = "EXIF:ImageDescription"
+    IMAGE_DESCRIPTION = "EXIF:ImageDescription"  # Image
+    KEYS_DESCRIPTION = "Keys:Description"  # Video
     # Title, creator and copyright, each from XMP, IPTC and EXIF. These are
     # read one by one and the fallback is done in Python: ExifTool's MWG
     # composites would do it, but loading the MWG module makes the ungrouped

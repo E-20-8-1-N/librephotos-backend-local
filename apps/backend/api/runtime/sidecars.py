@@ -37,13 +37,13 @@ from urllib3.exceptions import ReadTimeoutError
 from urllib3.response import BaseHTTPResponse
 from urllib3.util.retry import Retry
 
-from librephotos.env import EnvError, env_int
+from librephotos.env import EnvError, env_int, env_str
 
 if TYPE_CHECKING:
     # typing.Self is Python 3.11+; the backend-gpu image runs 3.10.
     from typing import Self
 
-SIDECAR_HOST = "http://127.0.0.1"
+SIDECAR_HOST = f"http://{env_str('SIDECAR_HOST', '127.0.0.1')}"
 
 HIGHEST_PORT = 65535
 
@@ -72,9 +72,7 @@ SERVICES = _valid_ports(
         "image_similarity": env_int("SIDECAR_PORT_IMAGE_SIMILARITY", 8002),
         "thumbnail": env_int("SIDECAR_PORT_THUMBNAIL", 8003),
         "face_recognition": env_int("SIDECAR_PORT_FACE_RECOGNITION", 8005),
-        "image_captioning": env_int("SIDECAR_PORT_IMAGE_CAPTIONING", 8007),
         "exif": env_int("SIDECAR_PORT_EXIF", 8010),
-        "tags": env_int("SIDECAR_PORT_TAGS", 8011),
         "ocr": env_int("SIDECAR_PORT_OCR", 8012),
     }
 )

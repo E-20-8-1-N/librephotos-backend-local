@@ -4,20 +4,23 @@ import os
 
 from drf_spectacular.utils import extend_schema
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api.accounts.home_scan import start_home_scan, user_from_path
 from api.albums.auto_albums import delete_missing_photos
 from api.directory_watcher import scan_photos
 from api.drf.params import parse_body
 from api.drf.request_user import request_user
+from api.jobs.queue import enqueue_job
 from api.jobs.start import start_job
 from api.models import LongRunningJob
 from api.models.user import User
 from api.photos.retention import empty_trash_job
 from api.runtime.ml_models import missing_models_prerequisites
+from api.serializers.backend_scan import BackendJobResponse, BackendPathRequest
 from api.serializers.job import GenerateOcrRequest, JobStartedResponseSerializer
 from api.thumbnails.metadata import strip_thumbnail_metadata_job
 
@@ -110,6 +113,58 @@ class DeleteMissingPhotosView(APIView):
             user,
             description="the missing-photo cleanup",
         )
+
+
+class BackendScanPhotosView(APIView):
+    permission_classes = (AllowAny,)
+
+    @extend_schema(request=BackendPathRequest, responses=BackendJobResponse)
+    def post(self, request: Request, format: str | None = None) -> Response:
+        user, path = user_from_path(parse_body(request, BackendPathRequest)["path"])
+        job = start_home_scan(user)
+        return Response(
+            {
+                "status": True,
+                "job_id": job.job_id,
+                "username": user.username,
+                "scan_directory": user.scan_directory,
+                "path": path,
+            }
+        )
+
+    @extend_schema(
+        deprecated=True, request=BackendPathRequest, responses=BackendJobResponse
+    )
+    def get(self, request: Request, format: str | None = None) -> Response:
+        return self.post(request, format)
+
+
+class BackendDeleteMissingPhotosView(APIView):
+    permission_classes = (AllowAny,)
+
+    @extend_schema(request=BackendPathRequest, responses=BackendJobResponse)
+    def post(self, request: Request, format: str | None = None) -> Response:
+        # A removed path still identifies the user's home for cleanup.
+        user, path = user_from_path(
+            parse_body(request, BackendPathRequest)["path"], must_exist=False
+        )
+        job = enqueue_job(
+            user, LongRunningJob.JOB_DELETE_MISSING_PHOTOS, delete_missing_photos, user
+        )
+        return Response(
+            {
+                "status": True,
+                "job_id": job.job_id,
+                "username": user.username,
+                "path": path,
+            }
+        )
+
+    @extend_schema(
+        deprecated=True, request=BackendPathRequest, responses=BackendJobResponse
+    )
+    def get(self, request: Request, format: str | None = None) -> Response:
+        return self.post(request, format)
 
 
 class ClassifyMediaView(APIView):

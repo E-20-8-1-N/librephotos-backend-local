@@ -2,11 +2,13 @@ from unittest.mock import patch
 
 from constance.test import override_config
 from django.test import TestCase
+from geopy.location import Location
 
 from api.geocode.geocode import no_place, reverse_geocode, search_location
 from api.geocode.parsers.mapbox import parse as parse_mapbox
 from api.geocode.parsers.nominatim import parse as parse_nominatim
 from api.geocode.parsers.opencage import parse as parse_opencage
+from api.geocode.parsers.photon import parse as parse_photon
 from api.geocode.parsers.tomtom import parse as parse_tomtom
 from api.tests.fixtures.geocode.expectations.mapbox import (
     expectations as mapbox_expectations,
@@ -16,6 +18,9 @@ from api.tests.fixtures.geocode.expectations.nominatim import (
 )
 from api.tests.fixtures.geocode.expectations.opencage import (
     expectations as opencage_expectations,
+)
+from api.tests.fixtures.geocode.expectations.photon import (
+    expectations as photon_expectations,
 )
 from api.tests.fixtures.geocode.expectations.tomtom import (
     expectations as tomtom_expectations,
@@ -27,6 +32,7 @@ from api.tests.fixtures.geocode.responses.nominatim import (
 from api.tests.fixtures.geocode.responses.opencage import (
     responses as opencage_responses,
 )
+from api.tests.fixtures.geocode.responses.photon import responses as photon_responses
 from api.tests.fixtures.geocode.responses.tomtom import responses as tomtom_responses
 
 
@@ -55,6 +61,12 @@ class OpenCageLocation:
 
 
 class TestGeocodeParsers(TestCase):
+    def test_photon_parser(self):
+        for raw, expected in zip(photon_responses, photon_expectations):
+            center = raw["geometry"]["coordinates"]
+            location = Location(expected["address"], (center[1], center[0]), raw)
+            self.assertEqual(expected, parse_photon(location))
+
     def test_mapbox_parser(self):
         for index, raw in enumerate(mapbox_responses):
             self.assertEqual(

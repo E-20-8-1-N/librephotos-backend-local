@@ -4,6 +4,7 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+import pillow_heif
 from django.conf import settings
 from PIL import Image
 
@@ -19,6 +20,8 @@ from api.photos.media_files import is_raw
 from api.runtime import binaries, sidecars
 from api.thumbnails import face_boxes
 from api.video import color
+
+pillow_heif.register_heif_opener()
 
 if TYPE_CHECKING:
     import numpy as np

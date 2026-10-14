@@ -5,7 +5,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -93,7 +93,7 @@ class LongRunningJobViewSet(
 
 
 class QueueAvailabilityView(APIView):
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (AllowAny,)
 
     @extend_schema(responses=QueueAvailabilitySerializer)
     def get(self, request: Request, format: str | None = None) -> Response:
@@ -111,9 +111,15 @@ class QueueAvailabilityView(APIView):
         # the job itself (type, progress, who started it) follows the #1861
         # rule above: its starter and staff see it, nobody else does.
         busy = running_job is not None
-        user = request_user(request)
-        if running_job is not None and (
-            running_job.started_by_id == user.id or user.is_staff or user.is_superuser
+        user = request.user
+        if (
+            running_job is not None
+            and isinstance(user, User)
+            and (
+                running_job.started_by_id == user.id
+                or user.is_staff
+                or user.is_superuser
+            )
         ):
             job_detail = LongRunningJobSerializer(running_job).data
 

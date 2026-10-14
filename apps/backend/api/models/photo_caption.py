@@ -205,6 +205,21 @@ class PhotoCaption(models.Model):
         if commit:
             self.save()
 
+    def store_caption_generator_tags(self, tags: str, commit: bool = True) -> None:
+        """Store external Things alongside the upstream OpenCLIP results."""
+        if self.captions_json is None:
+            self.captions_json = {}
+        self.captions_json["im2txt_tag"] = tags
+        titles = list(
+            dict.fromkeys(tag.strip() for tag in tags.split(",") if tag.strip())
+        )
+        api.models.album_thing.set_photo_album_things(
+            self.photo, titles, "caption_generator_tag"
+        )
+        self.recreate_search_captions()
+        if commit:
+            self.save()
+
     def store_search_embedding(self, embedding: Sequence[float]) -> None:
         """Store the tagger's image embedding as the photo's search embedding.
 

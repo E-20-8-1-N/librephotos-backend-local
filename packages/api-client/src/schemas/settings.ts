@@ -38,6 +38,7 @@ export const SiteSettings = z.object({
   allow_registration: z.boolean(),
   allow_upload: z.boolean(),
   skip_patterns: z.string(),
+  scan_skip_extensions: z.string().optional(),
   map_api_key: z.string(),
   map_api_provider: z.string(),
   map_tile_provider: z.string(),

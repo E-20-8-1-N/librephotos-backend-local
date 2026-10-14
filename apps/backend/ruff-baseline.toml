@@ -89,8 +89,5 @@
 "service/_common.py" = ["N818"]
 "service/exif/main.py" = ["BLE001"]
 "service/face_recognition/main.py" = ["BLE001"]
-"service/image_captioning/main.py" = ["BLE001", "PLW0603"]
 "service/ocr/main.py" = ["BLE001", "PLW0603"]
-"service/tags/main.py" = ["BLE001"]
-"service/tags/openclip/openclip.py" = ["PLR0913", "PLW2901"]
 "service/thumbnail/main.py" = ["BLE001"]

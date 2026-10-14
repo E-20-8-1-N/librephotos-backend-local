@@ -18,11 +18,11 @@ from unittest.mock import patch
 import numpy as np
 from django.test import SimpleTestCase
 from PIL import Image
+from service.tags.openclip import openclip as openclip_module
+from service.tags.openclip.openclip import OpenCLIP, Preprocess
 
 from api.classification.documents import STRONG_TAG_LABELS, classify_document
 from api.tests.ocr.test_ocr_engine_golden import _render_receipt
-from service.tags.openclip import openclip as openclip_module
-from service.tags.openclip.openclip import OpenCLIP, Preprocess
 
 BUNDLE_FILES = ("visual.onnx", "textual.onnx", "tokenizer.json", "preprocess.json")
 

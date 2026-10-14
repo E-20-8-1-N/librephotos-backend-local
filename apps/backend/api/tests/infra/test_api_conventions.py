@@ -509,6 +509,9 @@ DEBUG_ONLY_VIEWS = {
 # Views an anonymous caller gets past the permission check of, for at least one
 # of their methods. Every other view under api/ answers 401 before its body runs.
 ANONYMOUS_VIEWS: dict[str, str] = {
+    "api.views.scan_triggers.BackendScanPhotosView": "fork system integration: account resolved from its validated home path",
+    "api.views.scan_triggers.BackendDeleteMissingPhotosView": "fork system integration: cleanup scoped to the validated home account",
+    "api.views.jobs.QueueAvailabilityView": "fork integration queue status; job details still require the owner or staff",
     "api.views.health.HealthzView": "health probe",
     "api.views.health.HealthzPostgresqlView": "health probe",
     "api.views.health.HealthzQueueView": "health probe",

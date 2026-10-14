@@ -60,7 +60,9 @@ SIDECAR = "tags"
 
 def semantic_shares_tagger() -> bool:
     """Whether the tags job also produces the search embeddings."""
-    return feature_enabled("SCENE_CLASSIFICATION")
+    from api.classification.captioning import uses_caption_generator
+
+    return feature_enabled("SCENE_CLASSIFICATION") and not uses_caption_generator()
 
 
 def produced_by_openclip(prefix: str = "") -> Q:
@@ -132,6 +134,15 @@ def generate_photo_tags(caption: PhotoCaption, commit: bool = True) -> None:
     """
     if not feature_enabled("SCENE_CLASSIFICATION"):
         logger.info("Scene classification is disabled")
+        return
+    from api.classification.captioning import (
+        generate_external_caption,
+        uses_caption_generator,
+    )
+
+    if uses_caption_generator():
+        if (caption.captions_json or {}).get("im2txt_tag") is None:
+            generate_external_caption(caption, commit)
         return
     if not _needs_tags(caption):
         return

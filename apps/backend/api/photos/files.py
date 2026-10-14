@@ -11,10 +11,10 @@ import os
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, NamedTuple
 
+from api.models.file import File
 from api.video import transcode_cache
 
 if TYPE_CHECKING:
-    from api.models.file import File
     from api.models.photo import Photo
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,20 @@ def missing_files(photo: Photo) -> list[File]:
     as the next scan would, so the photo is not flagged missing meanwhile.
     """
     return [file for file in photo.files.all() if not _on_disk(file)]
+
+
+def missing_on_disk(photo: Photo) -> bool:
+    """True when no media variant or main file survives, including exact copies.
+
+    An XMP sidecar cannot keep a photo alive by itself. The main file may no
+    longer be in ``files`` after a previous missing-file check detached it.
+    """
+    media = {
+        file.pk: file for file in photo.files.all() if file.type != File.METADATA_FILE
+    }
+    if photo.main_file is not None and photo.main_file.type != File.METADATA_FILE:
+        media.setdefault(photo.main_file.pk, photo.main_file)
+    return not any(_on_disk(file) for file in media.values())
 
 
 def _on_disk(file: File) -> bool:

@@ -95,6 +95,8 @@ class SkipPatternsReadOnceTest(TestCase):
         reads = []
 
         class CountingConfig:
+            SCAN_SKIP_EXTENSIONS = ""
+
             @property
             def SKIP_PATTERNS(self):
                 reads.append(1)

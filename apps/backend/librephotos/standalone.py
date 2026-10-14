@@ -40,8 +40,11 @@ from librephotos import instance_lock
 if TYPE_CHECKING:
     # Only for annotations: the GUI and the server modules are imported lazily
     # inside the functions that use them.
+    import pillow_heif
     import uvicorn
     from PIL import Image
+
+    pillow_heif.register_heif_opener()
 
     from librephotos.tray import Tray
 

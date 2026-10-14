@@ -8,6 +8,90 @@ This page is the reference for the environment variables LibrePhotos reads and w
 
 ### PostgreSQL v18+ Volume Mount Change
 
+### dev-upstream integration (not released upstream)
+
+This fork assigns active accounts without a scan directory to
+`USER_HOME_DIRECTORY_PREFIX/<username>` and scans an existing home after the
+account is committed. Home scans process thumbnails immediately, then queue
+captions, Things, locations, search embeddings and faces through the current job
+pipeline. The hidden `.cetapod` folder is included. Missing-photo cleanup
+keeps upstream's mount and mass-removal checks and thumbnail cleanup receivers.
+Repeated or concurrent scans and uploads reuse the same photo for an indexed
+path or content hash. Missing-file scans delete photos with no surviving media
+variant, even if an XMP sidecar remains, in batches of 500. They report
+`deleted_photos` in the job result and remove unreferenced WebP and MP4 thumbnails
+after the database transaction commits. A surviving media variant or exact copy
+keeps the photo and its thumbnails.
+
+On Linux, PAM authenticates system accounts before Django's password and SSO
+backends. New PAM accounts are active staff/superusers, matching dev-upstream.
+The host PAM configuration and account files must be available inside the
+container. Access tokens last 60 minutes. New users default **Synchronize metadata
+to disk** to **Media File**; existing preferences are preserved.
+With **Media File**, caption edits made in the lightbox or metadata editor are
+written into the original photo's `EXIF:ImageDescription` or the original video's
+`Keys:Description`. **Sidecar File** writes the XMP sidecar instead. Clearing a
+caption removes that description from the selected target.
+
+The integration routes `POST /api/backendscanphotos/` and
+`POST /api/backenddeletemissingphotos/` accept `{"path": "/data/pool/home/alice/photo.jpg"}`.
+They retain the fork's anonymous integration access, derive the account from the
+home path, check its configured scan directory, and return `status`, `job_id`,
+`username` and `path`. A scan also returns `scan_directory`. Their deprecated GET
+forms accept the same JSON body. `/api/scanuploadedphotos/` starts an incremental
+scan; `/api/fullscanphotos/` remains a full rescan.
+
+Select `caption_generator` as **Captioning Model** (the fork default) for the
+external service, or `lfm2_vl_450m` for upstream's built-in captioner. The external
+service sees the same thumbnail paths as the backend. Its health endpoint is
+checked first; an existing Docker container with the configured host name is
+started if needed, when the backend has Docker access. `/rushgenerate` receives
+`file_path` and `file_ext`. Replies can contain `caption`, `objects` and `texts`,
+or embed the latter sections in the caption. Things are stored in `im2txt_tag`,
+indexed for search and added to Things albums. OpenCLIP remains available for
+semantic search. Turning off the caption or Thing feature suppresses that part
+of the response independently.
+
+| Variable | `.env` key | Default | Purpose |
+| --- | --- | --- | --- |
+| `USER_HOME_DIRECTORY_PREFIX` | `userHomeDirectoryPrefix` | `/data/pool/home/` | Account home root; an empty variable disables automatic home assignment/scanning. |
+| `SCAN_SKIP_EXTENSIONS` | `scanSkipExtensions` | `.pdf,.mkv,.avi,.wmv,.flv` | Initial scan exclusions, case-insensitive. Admins can change `scan_skip_extensions` through `/api/sitesettings/`; explicit file scans use the same exclusions. |
+| `Q_WORKERS` | `qWorkers` | `2` | Background workers; `WORKER_CONCURRENCY` takes precedence. |
+| `SIDECAR_HOST` | `sidecarHost` | `127.0.0.1` | Host the shared sidecar client calls; use `backend` only if the services bind a reachable address through `SERVICE_HOST`. |
+| `FACE_IDLE_TIMEOUT_SECONDS` | `faceIdleTimeoutSeconds` | `60` | Idle time before the watchdog unloads the face model. |
+| `CLIP_IDLE_TIMEOUT_SECONDS` | `clipIdleTimeoutSeconds` | `45` | Idle time before the watchdog unloads the OpenCLIP model. |
+| `Q_RECYCLE` | `qRecycle` | `25` | Tasks before a worker is recycled. |
+| `Q_MAX_RSS_KB` | `qMaxRssKb` | `300000` | Worker resident-memory ceiling in KB. |
+| `CAPTION_GENERATOR_HOST` | `captionGeneratorHost` | `caption-generator` | External service host and existing Docker container name. |
+| `CAPTION_GENERATOR_PORT` | `captionGeneratorPort` | `8020` | HTTP port. |
+| `CAPTION_GENERATOR_API_ENDPOINT` | `captionGeneratorApiEndpoint` | `rushgenerate` | Generation endpoint. |
+| `CAPTION_GENERATOR_HEALTH_ENDPOINT` | `captionGeneratorHealthEndpoint` | `health` | Readiness endpoint. |
+| `CAPTION_GENERATOR_TIMEOUT_SEC` | `captionGeneratorTimeoutSec` | `300` | Timeout per generation attempt. |
+| `CAPTION_GENERATOR_RETRIES` | `captionGeneratorRetries` | `5` | Retries after timeouts, connection failures or server errors. |
+| `CAPTION_GENERATOR_RETRY_BACKOFF` | `captionGeneratorRetryBackoff` | `2.0` | Initial retry delay in seconds, doubled for each generation retry. |
+| `CAPTION_GENERATOR_STARTUP_TIMEOUT_SEC` | `captionGeneratorStartupTimeoutSec` | `120` | Time to wait for a started container to become healthy. |
+| `OMP_NUM_THREADS` | _(none)_ | `1` in Docker | OpenMP thread limit inherited by helper services. |
+| `MKL_NUM_THREADS` | _(none)_ | `1` in Docker | MKL thread limit inherited by helper services. |
+
+Photon is available as `photon` for the map provider. Reverse-geocode search
+labels include additional places omitted from the provider's address.
+The scan also normalizes numeric EXIF text and language maps, imports video
+captions from `Keys:Description`, and writes edited video captions to that atom.
+Upstream's orientation, user-edit precedence and write-back status remain the
+source of truth when applying this metadata.
+
+For the fork's local deployment, run from `deploy/compose`:
+
+```shell
+httpPort=3010 docker compose -f docker-compose.unified.yml -f docker-compose.cetapod.yml up --build -d
+```
+
+This builds the current unified Dockerfile, serves port 3010, mounts `/mnt` at
+`/data` and host account configuration read-only, and uses PostgreSQL 18. The
+database and other environment values still come from your `.env`.
+
+### PostgreSQL v18+ Volume Mount Change
+
 The bundled Compose files run `pgautoupgrade/pgautoupgrade:18-alpine`, PostgreSQL 18. Releases up to 1.3.0 used the `latest` tag, which moves to a new PostgreSQL major as soon as one comes out, so any `docker compose pull` could upgrade your database. The major is now pinned, and moving to the next one is a LibrePhotos release with its own upgrade note. Back up the database directory (`${data}/db`, or `${data}/dbcursor` with `docker-compose.unified.yml`) before such an upgrade.
 
 :::warning Breaking Change
@@ -83,7 +167,7 @@ services:
 
 ### Limiting CPU and memory usage
 
-The backend container runs two things: **uvicorn**, which answers API requests, and a pool of **background workers**, which scan your library — thumbnails, face detection, captioning. Almost all of the CPU and memory LibrePhotos uses goes to the background workers, and by default there is **one worker per CPU core**.
+The backend container runs two things: **uvicorn**, which answers API requests, and a pool of **background workers**, which scan your library. Almost all of the CPU and memory LibrePhotos uses goes to the background workers. This fork defaults to **two workers**, controlled by `Q_WORKERS`; `WORKER_CONCURRENCY` overrides it.
 
 #### Start with the worker count, not a CPU limit
 
@@ -296,7 +380,7 @@ The backend talks to its helper services (thumbnails, metadata, faces, tags, cap
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `SERVICE_HOST` | `127.0.0.1` | Address the helper services listen on. The backend always calls them on `127.0.0.1`, so there is rarely a reason to change it; anything else exposes unauthenticated services to whatever can reach that address. |
+| `SERVICE_HOST` | `127.0.0.1` | Address the helper services listen on. `SIDECAR_HOST` selects the address the backend calls, defaulting to `127.0.0.1`. |
 
 *Releases before 1.2.0 listen on `0.0.0.0`.*
 

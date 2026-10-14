@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from bulk_update.helper import bulk_update
-from django.core.paginator import Paginator
 from django.db.models import Q
 
 from api.dataviz.color_palettes import hex_palette
@@ -89,13 +88,10 @@ def collect_visualizable_faces(
     face_encoding = []
     faces_with_encoding = []
     faces = Face.objects.filter(Q(photo__owner=user) & Q(deleted=False))
-    paginator = Paginator(faces, 5000)
-
-    for page in range(1, paginator.num_pages + 1):
-        for face in paginator.page(page).object_list:
-            if ((not face.person) or inferred) and face.encoding:
-                face_encoding.append(face.get_encoding_array())
-                faces_with_encoding.append(face)
+    for face in faces.iterator(chunk_size=2000):
+        if ((not face.person_id) or inferred) and face.encoding:
+            face_encoding.append(face.get_encoding_array())
+            faces_with_encoding.append(face)
 
     return face_encoding, faces_with_encoding
 
@@ -183,9 +179,11 @@ def collect_face_encodings(user: User) -> dict:
     ids: list[int] = []
     encoding_length: int | None = None
     face: Face
-    for face in Face.objects.filter(
-        photo__owner=user, encoding__isnull=False
-    ).prefetch_related("person"):
+    for face in (
+        Face.objects.filter(photo__owner=user, encoding__isnull=False)
+        .prefetch_related("person")
+        .iterator(chunk_size=2000)
+    ):
         if not face.encoding:
             continue
         enc = face.get_encoding_array()
@@ -248,7 +246,9 @@ def create_all_clusters(user: User, lrj: LongRunningJob | None = None) -> int:
 
     clt = build_clusterer(user, target_count)
     logger.info("Before finding clusters")
-    clt.fit(np.array(data["encoding"]))
+    encodings = np.array(data.pop("encoding"))
+    clt.fit(encodings)
+    del encodings
     logger.info("After finding clusters")
 
     sorted_indexes = group_indexes_by_label(clt.labels_)

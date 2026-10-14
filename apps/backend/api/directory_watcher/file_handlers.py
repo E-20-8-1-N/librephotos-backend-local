@@ -428,23 +428,32 @@ def _adopt_files_into_photo(
     photo: Photo, files: list[File], main_file: File, job_id: UUID | str
 ) -> None:
     """Attach missing files to an existing Photo and upgrade its main_file."""
-    for f in files:
-        if not photo.files.filter(hash=f.hash).exists():
-            photo.files.add(f)
+    existing_hashes = set(photo.files.values_list("hash", flat=True))
+    added_files = [file for file in files if file.hash not in existing_hashes]
+    if added_files:
+        photo.files.add(*added_files)
+        for file in added_files:
             logger.info(
                 "job %s: Attached file %s to existing Photo %s",
                 job_id,
-                f.path,
+                file.path,
                 photo.image_hash,
             )
 
-    if not photo.main_file:
-        return
-
-    current_priority = FILE_TYPE_PRIORITY.get(photo.main_file.type, 999)
-    if FILE_TYPE_PRIORITY.get(main_file.type, 999) < current_priority:
+    update_fields = []
+    if photo.main_file is None or FILE_TYPE_PRIORITY.get(
+        main_file.type, 999
+    ) < FILE_TYPE_PRIORITY.get(photo.main_file.type, 999):
         photo.main_file = main_file
-        photo.save(update_fields=["main_file"])
+        photo.video = main_file.type == File.VIDEO
+        update_fields.extend(["main_file", "video"])
+    if photo.removed:
+        photo.removed = False
+        photo.in_trashcan = False
+        photo.trashed_at = None
+        update_fields.extend(["removed", "in_trashcan", "trashed_at"])
+    if update_fields:
+        photo.save(update_fields=[*update_fields, "last_modified"])
 
 
 def group_files_into_photo(
@@ -470,57 +479,56 @@ def group_files_into_photo(
     if not files:
         return None
 
-    # Filter out metadata files for main photo creation - they're sidecars
-    non_metadata_files = [f for f in files if f.type != File.METADATA_FILE]
+    # The canonical File rows serialize a scan, upload or retry importing the
+    # same content. Lock in hash order so overlapping groups cannot deadlock.
+    with transaction.atomic():
+        files = list(
+            File.objects.select_for_update()
+            .filter(hash__in={file.hash for file in files})
+            .order_by("hash")
+        )
+        non_metadata_files = [file for file in files if file.type != File.METADATA_FILE]
+        main_file = select_main_file(non_metadata_files)
+        if main_file is None:
+            logger.warning("job %s: Only metadata files in group, skipping", job_id)
+            return None
 
-    if not non_metadata_files:
-        # Only metadata files - no photo to create
-        logger.warning("job %s: Only metadata files in group, skipping", job_id)
-        return None
+        # Only media identifies a photo: identical XMPs may describe different
+        # photos. The image hash also finds removed rows with no file links.
+        media_hashes = [file.hash for file in non_metadata_files]
+        media_paths = [file.path for file in non_metadata_files]
+        matching = (
+            Photo.objects.owned_by(user)
+            .filter(
+                Q(image_hash__in=media_hashes)
+                | Q(files__in=non_metadata_files)
+                | Q(main_file__in=non_metadata_files)
+                | Q(files__path__in=media_paths)
+                | Q(main_file__path__in=media_paths)
+            )
+            .distinct()
+            .order_by("removed", "in_trashcan", "added_on", "pk")
+        )
+        # Keep upstream's main-file preference for a RAW/JPEG group which an
+        # older scan left as separate photos; the repair job merges the rest.
+        existing_photo = (
+            matching.filter(main_file=main_file).first() or matching.first()
+        )
+        if existing_photo:
+            _adopt_files_into_photo(existing_photo, files, main_file, job_id)
+            return existing_photo
 
-    # Select main file based on priority
-    main_file = select_main_file(non_metadata_files)
-    if not main_file:
-        return None
-
-    # Check if a Photo already exists with any of these files. Matching on
-    # main_file as well as the files m2m re-adopts photos whose file went
-    # missing and reappeared: detach_missing_files detaches a missing file from the
-    # m2m but keeps main_file pointing at it, so without that match a
-    # reappearing file would spawn a duplicate Photo with the same image_hash.
-    # Sidecars are left out of the match: File rows are keyed by content hash,
-    # so byte-identical XMPs of two different photos share a single row.
-    # When an earlier run left the group as several photos (a RAW uploaded
-    # before its JPEG), the one whose main file is the group's wins: adopting
-    # into the RAW's photo would make it a second photo of the JPEG, which
-    # the repair job no longer touches. The repair job merges the rest.
-    matching = Photo.objects.owned_by(user).filter(
-        Q(files__in=non_metadata_files) | Q(main_file__in=non_metadata_files)
-    )
-    existing_photo = matching.filter(main_file=main_file).first() or matching.first()
-
-    if existing_photo:
-        _adopt_files_into_photo(existing_photo, files, main_file, job_id)
-        return existing_photo
-
-    # Create new Photo
-    photo = Photo()
-    photo.image_hash = main_file.hash
-    photo.owner = user
-    photo.added_on = timezone.now()
-    photo.geolocation_json = {}
-    photo.video = main_file.type == File.VIDEO
-    photo.save()
-
-    # Add all files to the photo
-    for f in files:
-        photo.files.add(f)
-
-    photo.main_file = main_file
-    photo.save()
-
-    if _attach_embedded_motion_video(user, photo, main_file):
+        photo = Photo(
+            image_hash=main_file.hash,
+            owner=user,
+            added_on=timezone.now(),
+            geolocation_json={},
+            video=main_file.type == File.VIDEO,
+            main_file=main_file,
+        )
         photo.save()
+        photo.files.add(*files)
+        _attach_embedded_motion_video(user, photo, main_file)
 
     logger.info(
         "job %s: Created Photo %s with %s file(s)", job_id, photo.image_hash, len(files)
@@ -597,27 +605,6 @@ def _adopt_as_variant(user: User, path: str) -> Photo | None:
     return None
 
 
-def _photo_of_path(user: User, path: str) -> Photo | None:
-    """The user's Photo that already holds ``path``, the scan's matching rule.
-
-    Matching on ``main_file`` as well as the files m2m, as
-    ``group_files_into_photo`` does, finds a photo whose file went missing and
-    came back, and attaches the file to it again. Without it a second call for an indexed path built a second
-    Photo on the same File (#2257).
-    """
-    photo = (
-        Photo.objects.owned_by(user)
-        .filter(Q(files__path=path) | Q(main_file__path=path))
-        .order_by("added_on")
-        .first()
-    )
-    if photo is not None and not photo.files.filter(path=path).exists():
-        # Back after it was flagged missing: get_or_create_file clears the
-        # flag, and the photo holds the file again.
-        photo.files.add(get_or_create_file(path, user))
-    return photo
-
-
 def create_new_image(user: User, path: str) -> Photo | None:
     """
     Creates a new Photo object based on user input and file path.
@@ -655,26 +642,12 @@ def create_new_image(user: User, path: str) -> Photo | None:
     if replaced_photo:
         return replaced_photo
 
-    existing_photo = _photo_of_path(user, path) or _adopt_as_variant(user, path)
+    existing_photo = _adopt_as_variant(user, path)
     if existing_photo:
         return existing_photo
 
-    # === Standard Photo Creation ===
-    photo = Photo()
-    photo.image_hash = hash_value
-    photo.owner = user
-    photo.added_on = timezone.now()
-    photo.geolocation_json = {}
-    photo.video = is_video(path)
-    photo.save()
-    file = get_or_create_file(path, user)
-
-    _attach_embedded_motion_video(user, photo, file)
-
-    photo.files.add(file)
-    photo.main_file = file
-    photo.save()
-    return photo
+    file = get_or_create_file(path, user, hash_value)
+    return group_files_into_photo(user, [file], "direct-import")
 
 
 def apply_device_timestamp_fallback(

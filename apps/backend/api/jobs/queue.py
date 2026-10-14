@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import NamedTuple
 
+from django import db
 from django.db import transaction
 from django_q.models import OrmQ, Schedule
 from django_q.tasks import AsyncTask, Chain, schedule
@@ -129,6 +131,7 @@ def enqueue_chain(
     *,
     prerequisites: Sequence[Task] = (),
     exclusive: bool = True,
+    in_thread: bool = False,
 ) -> list[LongRunningJob]:
     """Queue ``steps`` to run in order, each with its row, after ``prerequisites``.
 
@@ -157,6 +160,32 @@ def enqueue_chain(
         ]
 
         def send() -> None:
+            if in_thread:
+
+                def run_inline() -> None:
+                    try:
+                        for prerequisite in prerequisites:
+                            prerequisite.func(
+                                *prerequisite.args, **(prerequisite.kwargs or {})
+                            )
+                        for step, job in zip(steps, jobs, strict=True):
+                            if not LongRunningJob.objects.filter(
+                                pk=job.pk, cancelled=True
+                            ).exists():
+                                step.func(
+                                    *step.args, job_id=job.job_id, **(step.kwargs or {})
+                                )
+                    except Exception as error:
+                        logger.exception("Immediate job orchestration failed")
+                        for job in jobs:
+                            job.fail(error=error)
+                    finally:
+                        db.connections.close_all()
+
+                threading.Thread(
+                    target=run_inline, name=f"job-{jobs[0].job_id}", daemon=True
+                ).start()
+                return
             if not prerequisites and len(steps) == 1:
                 step, job = steps[0], jobs[0]
                 AsyncTask(

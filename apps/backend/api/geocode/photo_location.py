@@ -266,9 +266,8 @@ def add_location_to_album_dates(photo: Photo) -> None:
         return
 
     album_date = find_album_date(photo)
-    # find_album_date returns None when the photo is in no day album. That
-    # crashed here before the typing too (AttributeError), so it still does.
-    assert album_date is not None
+    if album_date is None:
+        return
     city_name = places[-2]
     if album_date.location and len(album_date.location) > 0:
         prev_value = album_date.location

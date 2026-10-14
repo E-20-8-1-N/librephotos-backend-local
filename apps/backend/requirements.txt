@@ -102,3 +102,10 @@ onnxruntime==1.23.2; python_version < "3.11"
 # (unclip step). 1.4.0 ships cp310 AND cp311 wheels for manylinux2014_x86_64 and
 # win_amd64, so both the GPU image (Python 3.10) and the standard image build.
 pyclipper==1.4.0
+
+# Dependencies for SVG image support
+cairosvg==2.9.1
+# Dependencies for Docker support to run management command
+docker==7.2.0
+# For PAM authentication support
+django-pam==3.0.1

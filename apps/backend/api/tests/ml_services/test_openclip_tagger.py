@@ -30,7 +30,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from django.test import SimpleTestCase
 from PIL import Image
-
 from service.tags.openclip import openclip as openclip_module
 from service.tags.openclip.openclip import (
     ClipTokenizer,

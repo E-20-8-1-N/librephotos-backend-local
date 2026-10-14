@@ -176,6 +176,8 @@ class RotateCharacterizationTest(TestCase):
     @patch("api.metadata.photo_writer.write_metadata")
     @patch("api.thumbnails.render.regenerate_thumbnails")
     def test_save_metadata_off_does_not_write(self, regen, write_metadata):
+        self.user.save_metadata_to_disk = User.SaveMetadata.OFF
+        self.user.save(update_fields=["save_metadata_to_disk"])
         rotate_photo(self.photo, 90)
 
         write_metadata.assert_not_called()

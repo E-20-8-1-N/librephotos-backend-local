@@ -98,6 +98,8 @@ NOT_PHOTO_SCOPED = {
     "api/scanphotos/": "scans the requester's own library",
     "api/scanuploadedphotos/": "scans the requester's own uploads",
     "api/fullscanphotos/": "scans the requester's own library",
+    "api/backendscanphotos/": "fork integration: intentionally chooses an account by its validated home path, not a photo id",
+    "api/backenddeletemissingphotos/": "fork integration: intentionally cleans the account identified by its validated home path",
     "api/scanfaces/": "queues a job on the requester's own photos",
     "api/deletemissingphotos/": "queues a job on the requester's own photos",
     "api/classifymedia/": "queues a job on the requester's own photos",

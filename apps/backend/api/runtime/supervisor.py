@@ -85,9 +85,14 @@ def _captioning_model_selected() -> bool:
     like _ocr_model_selected.
     """
     try:
+        from constance import config as site_config
+
         from api.runtime.ml_models import captioning_model_selected
 
-        return captioning_model_selected()
+        return (
+            captioning_model_selected()
+            and site_config.CAPTIONING_MODEL != "caption_generator"
+        )
     except DatabaseError:
         return True
 
@@ -326,7 +331,11 @@ def unload_idle_model(service: str) -> bool:
     if health.get("busy"):
         return False
     idle = time.time() - last_request_time
-    if idle < IDLE_UNLOAD_SECONDS:
+    timeout = {
+        "face_recognition": settings.FACE_IDLE_TIMEOUT_SECONDS,
+        "tags": settings.CLIP_IDLE_TIMEOUT_SECONDS,
+    }.get(service, IDLE_UNLOAD_SECONDS)
+    if idle < timeout:
         return False
 
     from api.runtime.http_timeouts import UNLOAD_MODEL

@@ -2,9 +2,19 @@ import tempfile
 
 from librephotos.logging_bootstrap import build_logging_config
 
+from . import production as _production
 from .production import *  # noqa
 
 DEBUG = True
+
+# The upstream suite covers the built-in model and explicit library assignment.
+# Fork integration tests opt into the home root and external captioner.
+USER_HOME_DIRECTORY_PREFIX = ""
+CONSTANCE_CONFIG = {
+    **_production.CONSTANCE_CONFIG,
+    "CAPTIONING_MODEL": ("lfm2_vl_450m", "Captioning model", "captioning_model"),
+    "SCAN_SKIP_EXTENSIONS": ("", "File extensions excluded from scanning", str),
+}
 
 # The suite has to stay quiet, but it cannot lose the file handler:
 # logging_bootstrap.get_file_handler resolves the live rotating handler out of

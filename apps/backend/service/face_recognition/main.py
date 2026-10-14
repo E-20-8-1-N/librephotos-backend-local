@@ -5,12 +5,21 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
+import pillow_heif
 from flask.typing import ResponseReturnValue
 from PIL import Image, UnidentifiedImageError
 
 from librephotos.env import data_models_root
-from service._common import create_app, json_fields, logger, serve_forever
+from service._common import (
+    create_app,
+    json_fields,
+    logger,
+    release_memory,
+    serve_forever,
+)
 from service.onnx_session import execution_providers, uses_gpu
+
+pillow_heif.register_heif_opener()
 
 if TYPE_CHECKING:
     from insightface.app import FaceAnalysis
@@ -48,6 +57,8 @@ def _normalize_model_name(model_name: str | None) -> str:
 def _get_face_analysis(model_name: str | None) -> FaceAnalysis:
     model_name = _normalize_model_name(model_name)
     if model_name not in face_analysis_models:
+        face_analysis_models.clear()
+        release_memory()
         from insightface.app import FaceAnalysis
 
         providers = execution_providers()
@@ -142,7 +153,8 @@ def create_face_encodings() -> ResponseReturnValue:
     )
 
     try:
-        image = np.array(Image.open(source).convert("RGB"))
+        with Image.open(source) as image_file:
+            image = np.array(image_file.convert("RGB"))
         face_analysis = _get_face_analysis(model_name)
         detected_faces = face_analysis.get(image)
         matched_faces = _find_best_face_match(face_locations, detected_faces)

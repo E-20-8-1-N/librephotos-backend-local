@@ -14,6 +14,7 @@ import requests
 from django import db
 from django.db.models import Q, QuerySet
 
+from api.classification.captioning import generate_photo_caption, uses_caption_generator
 from api.classification.documents import classify_document
 from api.directory_watcher.utils import (
     CANCELLATION_CHECK_INTERVAL,
@@ -85,7 +86,7 @@ def generate_face_embeddings(user: User, job_id: UUID | str | None = None) -> No
         lrj.update_progress(current=0, target=faces.count())
         db.connections.close_all()
 
-        for idx, face in enumerate(faces):
+        for idx, face in enumerate(faces.iterator()):
             if _scan_cancelled(idx, job_id, "Generate face embeddings job cancelled"):
                 return
             _encode_face(face, job_id)
@@ -147,7 +148,7 @@ def _queue_per_photo_tasks(
     stays small and the worker works on the row as it is when the task runs.
     """
     photo_ids = photos.values_list("pk", flat=True)
-    for idx, photo_id in enumerate(photo_ids):
+    for idx, photo_id in enumerate(photo_ids.iterator(chunk_size=2000)):
         if _scan_cancelled(idx, job_id, cancelled_message):
             return
         enqueue_task(task, photo_id, job_id)
@@ -180,10 +181,11 @@ def _record_photo_error(photo: Photo, err: Exception) -> str:
 
 def _untagged_photos(user: User) -> QuerySet[Photo]:
     """Photos of ``user`` that carry no OpenCLIP tags."""
+    key = "im2txt_tag" if uses_caption_generator() else OPENCLIP
     return Photo.objects.owned_by(user).filter(
         Q(caption_instance__isnull=True)
         | Q(caption_instance__captions_json__isnull=True)
-        | Q(**{f"caption_instance__captions_json__{OPENCLIP}__isnull": True})
+        | Q(**{f"caption_instance__captions_json__{key}__isnull": True})
     )
 
 
@@ -243,6 +245,43 @@ def generate_tag_job(photo_id: UUID | Photo, job_id: str) -> None:
 
 # Minimum per-block confidence handed to the OCR sidecar (its contract default).
 OCR_MIN_CONFIDENCE = 0.6
+
+
+def generate_im2txt_captions(user: User, job_id: UUID) -> None:
+    """Queue missing captions, including photos a previous run could not reach."""
+    lrj = LongRunningJob.claim(user, LongRunningJob.JOB_GENERATE_IM2TXT, job_id)
+    if lrj is None:
+        return
+    try:
+        photos = Photo.objects.owned_by(user).filter(
+            Q(caption_instance__isnull=True)
+            | Q(caption_instance__captions_json__isnull=True)
+            | Q(caption_instance__captions_json__im2txt__isnull=True)
+            | Q(caption_instance__captions_json__im2txt="")
+        )
+        if _begin_photo_scan(lrj, photos):
+            _queue_per_photo_tasks(
+                generate_im2txt_job, photos, job_id, "Generate captions job cancelled"
+            )
+    except Exception as error:
+        logger.exception("Could not queue missing captions for job %s", job_id)
+        lrj.fail(error=error)
+
+
+def generate_im2txt_job(photo_id: UUID, job_id: UUID | str) -> None:
+    photo = _photo_for_task(photo_id, job_id)
+    if photo is None:
+        return
+    error = None
+    try:
+        caption, _ = PhotoCaption.objects.get_or_create(photo=photo)
+        # A tags task may already have generated the caption with the same call.
+        if not (caption.captions_json or {}).get("im2txt"):
+            if not generate_photo_caption(caption):
+                raise RuntimeError("No caption was generated")
+    except Exception as failure:
+        error = _record_photo_error(photo, failure)
+    update_scan_counter(job_id, error is not None, error)
 
 
 def ocr_image_source(photo: Photo) -> str | None:
