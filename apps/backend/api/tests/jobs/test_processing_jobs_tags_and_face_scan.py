@@ -20,7 +20,6 @@ from django.utils import timezone
 from api.directory_watcher import processing_jobs
 from api.directory_watcher.processing_jobs import generate_tags, scan_faces
 from api.models import LongRunningJob, Photo
-from api.search.semantic import OPENCLIP
 from api.tests.utils import create_test_photo, create_test_user
 
 
@@ -75,26 +74,24 @@ class GenerateTagsCharacterizationTest(TestCase):
         self.assertFalse(job.failed)
 
     def test_photo_already_tagged_with_active_model_is_skipped(self):
-        create_test_photo(
-            owner=self.user, captions_json={"openclip_vitb32": {"tags": []}}
-        )
+        create_test_photo(owner=self.user, captions_json={"im2txt_tag": ""})
         pending = create_test_photo(owner=self.user, captions_json={"im2txt": "a cat"})
 
         with patch.object(processing_jobs, "enqueue_task") as async_task:
             generate_tags(self.user, self.job_id)
 
-        # Only the photo missing an OpenCLIP key is queued: a caption row
+        # Only the photo missing the caption-generator key is queued: a caption row
         # without its tags does not count as tagged.
         self.assertEqual(async_task.call_count, 1)
         self.assertEqual(async_task.call_args.args[1], pending.pk)
         self.assertEqual(_job(self.job_id).progress_target, 1)
 
     def test_tags_of_an_earlier_tagger_do_not_count(self):
-        """Only OpenCLIP's key marks a photo as tagged."""
+        """Only caption-generator's key marks a photo as tagged."""
         earlier = create_test_photo(
             owner=self.user, captions_json={"an_earlier_tagger": {"tags": ["x"]}}
         )
-        create_test_photo(owner=self.user, captions_json={OPENCLIP: {"tags": []}})
+        create_test_photo(owner=self.user, captions_json={"im2txt_tag": ""})
 
         with patch.object(processing_jobs, "enqueue_task") as async_task:
             generate_tags(self.user, self.job_id)

@@ -1,142 +1,97 @@
-from pathlib import Path
-from tempfile import TemporaryDirectory
+"""Manual generation uses the external container without a local model download."""
+
 from unittest.mock import patch
 
 from constance.test import override_config
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from api.runtime.ml_models import ML_MODELS, MlTypes
+from api.models import PhotoCaption
 from api.tests.utils import api_error, create_test_photo, create_test_user
 
 
-def _create_captioner_files(model_root: Path):
-    for model in ML_MODELS:
-        if model["type"] != MlTypes.CAPTIONING:
-            continue
-        for target in [model["target-dir"]] + [
-            f["target"] for f in model["additional_files"]
-        ]:
-            path = model_root / "data_models" / target
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b"model")
-
-
 class PhotoCaptionsTest(TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.client = APIClient()
-        self.user1 = create_test_user()
-        self.user2 = create_test_user()
-        self.client.force_authenticate(user=self.user1)
-        # The endpoint checks for the captioner's files before asking the
-        # sidecar; the happy-path tests need them to exist.
-        self._media = TemporaryDirectory()
-        _create_captioner_files(Path(self._media.name))
-        self._settings = override_settings(MEDIA_ROOT=self._media.name)
-        self._settings.enable()
+        self.user = create_test_user()
+        self.client.force_authenticate(self.user)
+        self.photo = create_test_photo(owner=self.user)
 
-    def tearDown(self):
-        self._settings.disable()
-        self._media.cleanup()
+    @override_config(CAPTIONING_MODEL="None")
+    def test_none_model_still_generates_caption_and_things_without_a_download(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "api.classification.caption_generator.generate",
+                return_value=("A cat", "cat, sofa"),
+            ) as generate,
+            patch("api.runtime.ml_models.start_model_download") as download,
+            patch("api.metadata.photo_writer.write_metadata") as write,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            response = self.client.post(
+                "/api/photosedit/generateim2txt/",
+                {"image_hash": self.photo.image_hash},
+                format="json",
+            )
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.data["status"])
+        generate.assert_called_once()
+        write.assert_not_called()
+        download.assert_not_called()
+        captions = PhotoCaption.objects.get(photo=self.photo).captions_json
+        self.assertEqual("A cat", captions["im2txt"])
+        self.assertEqual("cat, sofa", captions["im2txt_tag"])
 
-    @patch("api.classification.captioning.generate_photo_caption", autospec=True)
-    def test_generate_captions_for_my_photo(self, generate_caption_mock):
-        generate_caption_mock.return_value = True
-        photo = create_test_photo(owner=self.user1)
+    def test_manual_action_regenerates_existing_outputs(self) -> None:
+        caption, _ = PhotoCaption.objects.get_or_create(photo=self.photo)
+        caption.captions_json = {"im2txt": "Old", "im2txt_tag": "old"}
+        caption.save()
+        with patch(
+            "api.classification.caption_generator.generate", return_value=("New", "new")
+        ) as generate:
+            response = self.client.post(
+                "/api/photosedit/generateim2txt/",
+                {"image_hash": self.photo.image_hash},
+                format="json",
+            )
+        self.assertEqual(200, response.status_code)
+        generate.assert_called_once()
+        caption.refresh_from_db()
+        self.assertEqual("New", caption.captions_json["im2txt"])
 
-        payload = {"image_hash": photo.image_hash}
-        headers = {"Content-Type": "application/json"}
-        response = self.client.post(
-            "/api/photosedit/generateim2txt/",
-            format="json",
-            data=payload,
-            headers=headers,
-        )
-        data = response.json()
-
-        self.assertTrue(data["status"])
-
-    @patch("api.classification.captioning.generate_photo_caption", autospec=True)
-    def test_fail_to_generate_captions_for_my_photo(self, generate_caption_mock):
-        generate_caption_mock.return_value = False
-        photo = create_test_photo(owner=self.user1)
-
-        payload = {"image_hash": photo.image_hash}
-        headers = {"Content-Type": "application/json"}
-        response = self.client.post(
-            "/api/photosedit/generateim2txt/",
-            format="json",
-            data=payload,
-            headers=headers,
-        )
+    def test_generator_failure_is_reported(self) -> None:
+        with patch(
+            "api.classification.caption_generator.generate",
+            side_effect=RuntimeError("container unavailable"),
+        ):
+            response = self.client.post(
+                "/api/photosedit/generateim2txt/",
+                {"image_hash": self.photo.image_hash},
+                format="json",
+            )
         self.assertEqual(500, response.status_code)
         self.assertEqual("caption_failed", api_error(response)["code"])
 
-    @patch("api.views.photos.start_model_download", autospec=True)
-    @patch("api.classification.captioning.generate_photo_caption", autospec=True)
-    def test_missing_model_starts_the_download_and_does_not_caption(
-        self, generate_caption_mock, start_download_mock
-    ):
-        """A caption asked for before the model download ran must not hit
-        the sidecar (it would fail inside ONNX Runtime); it starts the
-        download and tells the client why there is no caption yet."""
-        photo = create_test_photo(owner=self.user1)
-        with (
-            TemporaryDirectory() as empty_media,
-            override_settings(MEDIA_ROOT=empty_media),
-        ):
+    @override_settings(FEATURE_IMAGE_CAPTIONING=False)
+    def test_disabled_feature_does_not_call_the_container(self) -> None:
+        with patch("api.classification.caption_generator.generate") as generate:
             response = self.client.post(
                 "/api/photosedit/generateim2txt/",
+                {"image_hash": self.photo.image_hash},
                 format="json",
-                data={"image_hash": photo.image_hash},
             )
+        self.assertEqual(403, response.status_code)
+        generate.assert_not_called()
 
-        # A 503 with a code, no longer a 200 with "status": false (#2325).
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response["Retry-After"], "60")
-        error = api_error(response)
-        self.assertEqual(error["code"], "model_downloading")
-        self.assertIn("downloaded", error["message"])
-        start_download_mock.assert_called_once_with(self.user1)
-        generate_caption_mock.assert_not_called()
-
-    @override_config(CAPTIONING_MODEL="none")
-    @patch("api.views.photos.start_model_download", autospec=True)
-    @patch("api.classification.captioning.generate_photo_caption", autospec=True)
-    def test_no_captioning_model_refuses_without_starting_a_download(
-        self, generate_caption_mock, start_download_mock
-    ):
-        """With "None" the captioner is never downloaded (#2218): starting a
-        download would skip it and answer model_downloading forever."""
-        photo = create_test_photo(owner=self.user1)
-        with (
-            TemporaryDirectory() as empty_media,
-            override_settings(MEDIA_ROOT=empty_media),
-        ):
+    def test_another_users_photo_cannot_be_generated(self) -> None:
+        other = create_test_photo(owner=create_test_user())
+        with patch("api.classification.caption_generator.generate") as generate:
             response = self.client.post(
                 "/api/photosedit/generateim2txt/",
+                {"image_hash": other.image_hash},
                 format="json",
-                data={"image_hash": photo.image_hash},
             )
-
-        self.assertEqual(response.status_code, 403)
-        error = api_error(response)
-        self.assertEqual(error["code"], "permission_denied")
-        self.assertEqual(error["message"], "Image captioning is disabled")
-        start_download_mock.assert_not_called()
-        generate_caption_mock.assert_not_called()
-
-    def test_generate_captions_for_my_photo_of_another_user(self):
-        photo = create_test_photo(owner=self.user2)
-
-        payload = {"image_hash": photo.image_hash}
-        headers = {"Content-Type": "application/json"}
-        response = self.client.post(
-            "/api/photosedit/generateim2txt/",
-            format="json",
-            data=payload,
-            headers=headers,
-        )
-        # Returns 404 to avoid leaking existence of other users' photos
         self.assertEqual(404, response.status_code)
-        self.assertEqual("photo not found", api_error(response)["message"])
+        generate.assert_not_called()

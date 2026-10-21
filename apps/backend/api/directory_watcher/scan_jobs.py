@@ -22,10 +22,10 @@ from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Q
 
-from api.classification.captioning import uses_caption_generator
 from api.directory_watcher.file_grouping import (
     get_file_grouping_key,
     get_sidecar_grouping_keys,
+    select_main_file,
 )
 from api.directory_watcher.file_handlers import handle_file_group, handle_new_image
 from api.directory_watcher.missing_guard import (
@@ -35,7 +35,6 @@ from api.directory_watcher.missing_guard import (
 from api.directory_watcher.processing_jobs import (
     add_geolocation,
     generate_im2txt_captions,
-    generate_tags,
     probe_videos,
     scan_faces,
     videos_to_probe,
@@ -61,10 +60,17 @@ from api.models.album_thing import (
     album_thing_ids_for_photos,
     refresh_album_thing_photo_counts,
 )
+from api.models.file import hash_owner_part
 from api.models.tag import refresh_tag_photo_counts, tag_ids_for_photos
 from api.photos.file_cleanup import delete_unreferenced_photo_files
-from api.photos.files import detach_missing_files, missing_files, missing_on_disk
+from api.photos.files import (
+    delete_unreferenced_files,
+    detach_missing_files,
+    missing_files,
+    missing_on_disk,
+)
 from api.photos.media_files import is_metadata
+from api.photos.paths import folder_path_q
 from api.runtime.features import feature_enabled
 from api.search.embedding_jobs import batch_calculate_clip_embedding
 from api.search.semantic import semantic_shares_tagger
@@ -506,20 +512,10 @@ def _queue_followup_jobs(
     if color.can_probe() and videos_to_probe(user).exists():
         enqueue_followup(user, LongRunningJob.JOB_PROBE_VIDEOS, probe_videos, user)
 
-    # Read once: whether the tags job runs and whether the embedding job leaves
-    # photos to it have to agree, or a switch flipped between two reads leaves
-    # photos with neither tags nor search embeddings.
+    # Caption-generator returns captions and Things together. Every scan queues
+    # one combined job after thumbnails/metadata finish, without a special flag.
     tags_on = semantic_shares_tagger()
-    if tags_on or (
-        uses_caption_generator() and feature_enabled("SCENE_CLASSIFICATION")
-    ):
-        enqueue_followup(
-            user,
-            LongRunningJob.JOB_GENERATE_TAGS,
-            generate_tags,
-            user,
-        )
-    if force_im2txt and feature_enabled("IMAGE_CAPTIONING"):
+    if feature_enabled("IMAGE_CAPTIONING") or feature_enabled("SCENE_CLASSIFICATION"):
         enqueue_followup(
             user, LongRunningJob.JOB_GENERATE_IM2TXT, generate_im2txt_captions, user
         )
@@ -819,6 +815,105 @@ def _bulk_delete_photos(photo_ids: Sequence[UUID], user: User) -> int:
             transaction.on_commit(partial(delete_unreferenced_photo_files, photo_hash))
     logger.info("Deleted %s missing photos for user %s", len(missing), user.pk)
     return len(missing)
+
+
+def delete_removed_path(user: User, path: str, job_id: UUID | str) -> None:
+    """Apply a filesystem removal notification to its user's recorded path.
+
+    This is a confirmed, path-scoped event, so it also handles removal of the
+    last file or of a whole folder without treating an empty home as a lost
+    mount. Full library scans keep their separate missing-library guards.
+    """
+    job = LongRunningJob.claim(user, LongRunningJob.JOB_DELETE_MISSING_PHOTOS, job_id)
+    if job is None:
+        return
+    if os.path.isfile(path):
+        job.update_progress(current=0, target=0)
+        job.complete(result={"deleted_photos": 0, "deleted_files": 0})
+        return
+
+    real_home = os.path.realpath(user.scan_directory)
+    recorded_path = os.path.join(
+        os.path.abspath(user.scan_directory), os.path.relpath(path, real_home)
+    )
+    aliases = {os.path.abspath(path), os.path.normpath(recorded_path)}
+    owned = Photo.objects.owned_by(user)
+    matches = _removed_path_query(
+        (
+            "files__path",
+            "main_file__path",
+            "files__copies__path",
+            "main_file__copies__path",
+        ),
+        aliases,
+    )
+    selected_ids = list(owned.filter(matches).distinct().values_list("pk", flat=True))
+    file_ids = set(
+        File.objects.filter(
+            Q(photo__pk__in=selected_ids) | Q(main_photo__pk__in=selected_ids)
+        ).values_list("pk", flat=True)
+    )
+    for file in File.objects.filter(
+        _removed_path_query(("path", "copies__path"), aliases)
+    ).distinct():
+        if hash_owner_part(file.hash) == str(user.pk):
+            file_ids.add(file.pk)
+
+    job.update_progress(current=0, target=len(selected_ids))
+    deleted = 0
+    with transaction.atomic():
+        embedded = set(
+            File.embedded_media.through.objects.filter(
+                to_file_id__in=file_ids
+            ).values_list("to_file_id", flat=True)
+        )
+        # The same original-file locks as import: a file re-added while its
+        # notification waits is rechecked before its Photo can be removed.
+        list(
+            File.objects.select_for_update()
+            .filter(pk__in=file_ids - embedded)
+            .order_by("hash")
+        )
+        photos = (
+            owned.filter(pk__in=selected_ids)
+            .select_related("main_file")
+            .prefetch_related("files")
+        )
+        for index, photo in enumerate(photos, start=1):
+            job.stop_if_cancelled()
+            detach_missing_files(photo)
+            if missing_on_disk(photo):
+                deleted += _bulk_delete_photos([photo.pk], user)
+            elif photo.main_file is None or not os.path.isfile(photo.main_file.path):
+                originals = [
+                    file
+                    for file in photo.files.all()
+                    if file.type != File.METADATA_FILE
+                    and file.pk not in embedded
+                    and os.path.isfile(file.path)
+                ]
+                main_file = select_main_file(originals)
+                if main_file is not None:
+                    photo.main_file = main_file
+                    photo.video = main_file.type == File.VIDEO
+                    photo.save(update_fields=["main_file", "video", "last_modified"])
+            job.update_progress(current=index)
+        for copy in FileCopy.objects.filter(file_id__in=file_ids).filter(
+            _removed_path_query(("path",), aliases)
+        ):
+            if not os.path.isfile(copy.path):
+                copy.delete()
+        deleted_files = delete_unreferenced_files(file_ids)
+    job.complete(result={"deleted_photos": deleted, "deleted_files": deleted_files})
+
+
+def _removed_path_query(lookups: Sequence[str], paths: set[str]) -> Q:
+    """Exact file paths or directory descendants, without sibling-prefix matches."""
+    query = Q()
+    for lookup in lookups:
+        for path in paths:
+            query |= Q(**{lookup: path}) | folder_path_q(lookup, path)
+    return query
 
 
 def _detach_missing(missing: dict[UUID, list[str]], job_id: UUID) -> None:

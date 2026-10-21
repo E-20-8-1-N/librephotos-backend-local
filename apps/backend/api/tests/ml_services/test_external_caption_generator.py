@@ -94,6 +94,7 @@ class ExternalCaptionIntegrationTest(TestCase):
             "user_caption": "My own caption",
             "openclip_vitb32": {"tags": ["beach"]},
         }
+        self.caption.save()
         with (
             patch.object(
                 PhotoCaption, "resolve_thumbnail_path", return_value="/photo.webp"
@@ -129,6 +130,7 @@ class ExternalCaptionIntegrationTest(TestCase):
     @override_settings(FEATURE_IMAGE_CAPTIONING=False)
     def test_disabled_caption_does_not_overwrite_existing_caption(self) -> None:
         self.caption.captions_json = {"im2txt": "Existing caption"}
+        self.caption.save()
         with (
             patch.object(
                 PhotoCaption, "resolve_thumbnail_path", return_value="/photo.webp"
@@ -141,14 +143,12 @@ class ExternalCaptionIntegrationTest(TestCase):
         self.assertEqual("Existing caption", self.caption.captions_json["im2txt"])
         self.assertEqual("cat", self.caption.captions_json["im2txt_tag"])
 
-    @override_config(CAPTIONING_MODEL="caption_generator")
+    @override_config(CAPTIONING_MODEL="lfm2_vl_450m")
     def test_external_model_does_not_download_builtin_caption_weights(self) -> None:
-        from api.runtime.ml_models import ML_MODELS, MlTypes, _is_model_selected
+        from api.runtime.ml_models import MlTypes, _is_model_selected
 
         self.assertFalse(
-            any(
-                _is_model_selected(model)
-                for model in ML_MODELS
-                if model["type"] == MlTypes.CAPTIONING
+            _is_model_selected(
+                {"type": MlTypes.CAPTIONING, "name": "obsolete-captioner"}
             )
         )

@@ -10,6 +10,21 @@ The goal of automatic image captioning is to understand the content of an image 
 
 To use the feature, open one of your own photos and click the information icon in the top bar to show the details panel. In the **Caption** section, click the pencil icon in the top-right corner of the caption box to start editing, then click the wand icon that appears in its place. Once a caption has been generated, it appears as a suggestion just above the caption box — click it to drop the text into the caption field, then press the green tick below the box to save it. (If a caption has already been generated for this photo, the suggestion appears as soon as you start editing.) The wand, cancel and tick controls are only shown while you are editing, and captions cannot be generated on publicly shared photos.
 
+## dev-upstream fork behavior (not released upstream)
+
+This fork uses an external `caption-generator` container for both automatic scan
+generation and the manual caption action. Generated captions and Things are saved
+in LibrePhotos only, with no changes to media files or XMP sidecars. Saving a
+caption in the lightbox also updates only the database.
+
+To write a caption into file metadata, explicitly call
+`PATCH /api/photos/<photo_id>/metadata/` with `{"caption": "caption"}`. It follows
+the photo owner's metadata write preference. In **Media File** mode, this writes
+`EXIF:ImageDescription` for photos or `Keys:Description` for videos; **Sidecar
+File** writes XMP, and **Off** keeps the caption in LibrePhotos only. See the
+[integration reference](../installation/environment-variables.md#dev-upstream-integration-not-released-upstream)
+for configuration and retry behavior.
+
 ## Which model writes the captions?
 
 Captions come from [LFM2.5-VL](https://huggingface.co/LiquidAI/LFM2.5-VL-450M), a small vision-language model from Liquid AI that runs on ONNX Runtime like every other model in LibrePhotos. There is nothing to pick: the files (about 370 MB) are fetched with the other models while captioning is on. _Not released yet:_ with captioning turned off they are not downloaded; turning it on again downloads them when you save the site settings or ask for a caption. The model needs about 0.9 GB of RAM while it captions and takes a few seconds per photo on an older desktop CPU, under a second on a recent one.

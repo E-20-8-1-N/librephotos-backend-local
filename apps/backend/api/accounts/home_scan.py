@@ -55,7 +55,7 @@ def start_home_scan(user: User) -> LongRunningJob:
                 },
             )
         ],
-        in_thread=True,
+        dispatch="thread",
         prerequisites=missing_models_prerequisites(user),
     )
     return job

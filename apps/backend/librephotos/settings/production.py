@@ -418,7 +418,7 @@ CONSTANCE_CONFIG = {
     "CAPTIONING_MODEL": (
         "None",
         "Captioning model",
-        "None",
+        "captioning_model",
     ),
     "OCR_MODEL": (
         "ppocrv6_medium",

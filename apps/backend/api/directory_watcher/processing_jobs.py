@@ -14,7 +14,7 @@ import requests
 from django import db
 from django.db.models import Q, QuerySet
 
-from api.classification.captioning import generate_photo_caption, uses_caption_generator
+from api.classification.captioning import generate_external_caption
 from api.classification.documents import classify_document
 from api.directory_watcher.utils import (
     CANCELLATION_CHECK_INTERVAL,
@@ -37,7 +37,7 @@ from api.models.photo_caption import PhotoCaption
 from api.models.photo_ocr import PhotoOcr
 from api.runtime import sidecars
 from api.search import semantic
-from api.search.semantic import OPENCLIP, TAG_THING_TYPE
+from api.search.semantic import TAG_THING_TYPE
 from api.thumbnails import render
 from api.video import color, transcode_cache
 
@@ -180,12 +180,11 @@ def _record_photo_error(photo: Photo, err: Exception) -> str:
 
 
 def _untagged_photos(user: User) -> QuerySet[Photo]:
-    """Photos of ``user`` that carry no OpenCLIP tags."""
-    key = "im2txt_tag" if uses_caption_generator() else OPENCLIP
+    """Photos of ``user`` that carry no caption-generator Things."""
     return Photo.objects.owned_by(user).filter(
         Q(caption_instance__isnull=True)
         | Q(caption_instance__captions_json__isnull=True)
-        | Q(**{f"caption_instance__captions_json__{key}__isnull": True})
+        | Q(caption_instance__captions_json__im2txt_tag__isnull=True)
     )
 
 
@@ -248,17 +247,29 @@ OCR_MIN_CONFIDENCE = 0.6
 
 
 def generate_im2txt_captions(user: User, job_id: UUID) -> None:
-    """Queue missing captions, including photos a previous run could not reach."""
+    """Queue missing captions/Things for database-only generation."""
     lrj = LongRunningJob.claim(user, LongRunningJob.JOB_GENERATE_IM2TXT, job_id)
     if lrj is None:
         return
     try:
-        photos = Photo.objects.owned_by(user).filter(
-            Q(caption_instance__isnull=True)
-            | Q(caption_instance__captions_json__isnull=True)
-            | Q(caption_instance__captions_json__im2txt__isnull=True)
-            | Q(caption_instance__captions_json__im2txt="")
+        from api.runtime.features import feature_enabled
+
+        if not feature_enabled("IMAGE_CAPTIONING") and not feature_enabled(
+            "SCENE_CLASSIFICATION"
+        ):
+            lrj.update_progress(current=0, target=0)
+            lrj.complete()
+            return
+        needs = Q(caption_instance__isnull=True) | Q(
+            caption_instance__captions_json__isnull=True
         )
+        if feature_enabled("IMAGE_CAPTIONING"):
+            needs |= Q(caption_instance__captions_json__im2txt__isnull=True) | Q(
+                caption_instance__captions_json__im2txt=""
+            )
+        if feature_enabled("SCENE_CLASSIFICATION"):
+            needs |= Q(caption_instance__captions_json__im2txt_tag__isnull=True)
+        photos = Photo.objects.owned_by(user).filter(needs)
         if _begin_photo_scan(lrj, photos):
             _queue_per_photo_tasks(
                 generate_im2txt_job, photos, job_id, "Generate captions job cancelled"
@@ -275,10 +286,13 @@ def generate_im2txt_job(photo_id: UUID, job_id: UUID | str) -> None:
     error = None
     try:
         caption, _ = PhotoCaption.objects.get_or_create(photo=photo)
-        # A tags task may already have generated the caption with the same call.
-        if not (caption.captions_json or {}).get("im2txt"):
-            if not generate_photo_caption(caption):
-                raise RuntimeError("No caption was generated")
+        from api.runtime.features import feature_enabled
+
+        if feature_enabled("IMAGE_CAPTIONING") or feature_enabled(
+            "SCENE_CLASSIFICATION"
+        ):
+            if not generate_external_caption(caption, force=False):
+                raise RuntimeError("No caption or Things were generated")
     except Exception as failure:
         error = _record_photo_error(photo, failure)
     update_scan_counter(job_id, error is not None, error)

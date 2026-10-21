@@ -12,7 +12,7 @@ DEBUG = True
 USER_HOME_DIRECTORY_PREFIX = ""
 CONSTANCE_CONFIG = {
     **_production.CONSTANCE_CONFIG,
-    "CAPTIONING_MODEL": ("lfm2_vl_450m", "Captioning model", "captioning_model"),
+    "CAPTIONING_MODEL": ("None", "Captioning model", "captioning_model"),
     "SCAN_SKIP_EXTENSIONS": ("", "File extensions excluded from scanning", str),
 }
 

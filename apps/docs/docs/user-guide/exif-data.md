@@ -363,6 +363,14 @@ user named with `--user`.
 
 ## What LibrePhotos writes
 
+For this fork's **dev-upstream integration** (not released upstream), only
+`PATCH /api/photos/<photo_id>/metadata/` with a `caption` field writes a caption
+to disk. Generation, lightbox edits, bulk edits and caption reverts update the
+database only. The PATCH uses `EXIF:ImageDescription` for photos and
+`Keys:Description` for videos in media-file mode. See the
+[integration reference](../installation/environment-variables.md#dev-upstream-integration-not-released-upstream)
+for the owner's write preferences and file-write retries.
+
 With **Settings → Metadata Options → Write edits to files** set to `Save to sidecar` or `Save to
 media file`, these edits are also written to the photo's `.xmp` sidecar or into the photo file
 itself. With `Off`, the default, nothing is written. _Not released yet: up to 1.3.0, the setting

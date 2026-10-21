@@ -6,6 +6,8 @@ import time
 import requests
 from django.conf import settings
 
+from api.drf.exceptions import ServiceUnavailable
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,13 +72,28 @@ def parse_reply(body: dict[str, object]) -> tuple[str, str]:
         caption, texts = caption.split("\ntexts:", 1)
     objects = objects.strip() or _text(body, "objects")
     texts = texts.strip() or _text(body, "texts")
-    return caption.strip(), ", ".join(part for part in (objects, texts) if part)
+    tags = ", ".join(part for part in (objects, texts) if part)
+    if not tags:
+        supplied = body.get("tags") or body.get("tag")
+        if isinstance(supplied, dict):
+            supplied = supplied.get("tags")
+        if isinstance(supplied, list):
+            tags = ", ".join(
+                value.strip()
+                for value in supplied
+                if isinstance(value, str) and value.strip()
+            )
+        elif isinstance(supplied, str):
+            tags = supplied.strip()
+    return caption.strip(), tags
 
 
 def generate(image_path: str, file_ext: str) -> tuple[str, str]:
     """Generate a caption and Things in one request, with bounded retries."""
     if not ensure_ready():
-        raise RuntimeError("Caption generator is unavailable")
+        raise ServiceUnavailable(
+            "Caption generator is unavailable", code="caption_generator_unavailable"
+        )
     attempts = settings.CAPTION_GENERATOR_RETRIES + 1
     for attempt in range(attempts):
         try:

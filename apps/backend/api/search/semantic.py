@@ -24,7 +24,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 
 from api.lazy_import import LazyModule
@@ -59,10 +58,8 @@ SIDECAR = "tags"
 
 
 def semantic_shares_tagger() -> bool:
-    """Whether the tags job also produces the search embeddings."""
-    from api.classification.captioning import uses_caption_generator
-
-    return feature_enabled("SCENE_CLASSIFICATION") and not uses_caption_generator()
+    """Caption-generator's Things do not carry OpenCLIP search embeddings."""
+    return False
 
 
 def produced_by_openclip(prefix: str = "") -> Q:
@@ -113,96 +110,11 @@ def calculate_query_embeddings(query: str | None) -> tuple[list[float], float]:
     return emb, magnitude
 
 
-def _needs_tags(caption: PhotoCaption) -> bool:
-    """Whether the photo has a big thumbnail to tag and no OpenCLIP tags yet."""
-    try:
-        thumbnail = caption.photo.thumbnail
-    except ObjectDoesNotExist:
-        return False
-    if not thumbnail.thumbnail_big:
-        return False
-    return caption.captions_json is None or caption.captions_json.get(OPENCLIP) is None
-
-
 def generate_photo_tags(caption: PhotoCaption, commit: bool = True) -> None:
-    """Tag the photo with OpenCLIP.
-
-    The tags go to ``captions_json[OPENCLIP]`` and the photo's tag albums.
-    When tagging feeds semantic search too (``semantic_shares_tagger``),
-    the same image-tower run gives the photo's search embedding. Moved out
-    of ``PhotoCaption`` so the model makes no sidecar calls (#2336).
-    """
+    """Generate Things and a caption together with the external container."""
     if not feature_enabled("SCENE_CLASSIFICATION"):
         logger.info("Scene classification is disabled")
         return
-    from api.classification.captioning import (
-        generate_external_caption,
-        uses_caption_generator,
-    )
+    from api.classification.captioning import generate_external_caption
 
-    if uses_caption_generator():
-        if (caption.captions_json or {}).get("im2txt_tag") is None:
-            generate_external_caption(caption, commit)
-        return
-    if not _needs_tags(caption):
-        return
-
-    photo = caption.photo
-    try:
-        import requests
-
-        from api.runtime.http_timeouts import TAGS
-
-        image_path = photo.thumbnail.thumbnail_big.path
-        confidence = photo.owner.confidence
-        json_data = {
-            "image_path": image_path,
-            "confidence": confidence,
-            "tagging_model": OPENCLIP,
-        }
-        shares_embedding = semantic_shares_tagger()
-        if shares_embedding:
-            json_data["with_embedding"] = True
-        try:
-            response = sidecars.post(
-                "tags", "/generate-tags", json=json_data, timeout=TAGS
-            )
-        except requests.HTTPError as error:
-            # raise_for_status() always attaches the response it checked.
-            assert error.response is not None
-            logger.warning(
-                "Tag service returned status %s for image %s: %s",
-                error.response.status_code,
-                image_path,
-                sidecars.error_detail(error),
-            )
-            return
-
-        try:
-            response_json = response.json()
-        except (ValueError, RuntimeError):
-            logger.warning(
-                "Tag service returned non-JSON response for image %s", image_path
-            )
-            return
-
-        tags_result = response_json.get("tags")
-
-        if tags_result is None:
-            return
-        embedding = (
-            tags_result.pop("embedding", None)
-            if isinstance(tags_result, dict)
-            else None
-        )
-        if shares_embedding and embedding:
-            caption.store_search_embedding(embedding)
-
-        caption.store_tags((tags_result or {}).get("tags", []), commit=commit)
-        logger.info("generated %s tags for image %s.", OPENCLIP, image_path)
-    except Exception as e:
-        logger.exception(
-            "could not generate tags for image %s",
-            photo.main_file.path if photo.main_file else "no main file",
-        )
-        raise e
+    generate_external_caption(caption, commit, force=False)

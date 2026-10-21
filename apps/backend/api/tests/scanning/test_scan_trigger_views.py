@@ -18,6 +18,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
+from constance.test import override_config
 from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -220,6 +221,7 @@ class ScanPhotosViewHappyPathTest(ScanViewTestBase):
         return str(media_root)
 
     @override_settings(FEATURE_FACE_DETECTION=False, FEATURE_IMAGE_CAPTIONING=False)
+    @override_config(OCR_MODEL="none")
     def test_only_openclip_is_needed_with_faces_and_captioning_off(self):
         """No face pack or captioner download is chained (#2218)."""
         with override_settings(MEDIA_ROOT=self._media_root_with_only_openclip()):

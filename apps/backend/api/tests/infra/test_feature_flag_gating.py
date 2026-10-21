@@ -4,9 +4,8 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import requests
 from constance import config as site_config
 from constance.codecs import dumps
 from constance.models import Constance
@@ -21,7 +20,7 @@ from api.directory_watcher.file_handlers import group_files_into_photo
 from api.directory_watcher.scan_jobs import (
     add_geolocation,
     batch_calculate_clip_embedding,
-    generate_tags,
+    generate_im2txt_captions,
     scan_faces,
     scan_photos,
 )
@@ -196,25 +195,22 @@ class SceneClassificationFeatureFlagTest(TestCase):
         self.photo = create_test_photo(owner=self.user)
         self.caption = PhotoCaption.objects.create(photo=self.photo)
 
-    @patch("api.runtime.sidecars.http.post")
+    @patch(
+        "api.classification.caption_generator.generate", return_value=("A cat", "cat")
+    )
     def test_tags_are_generated_by_default(self, post_mock):
-        response = MagicMock(ok=False, status_code=503)
-        response.raise_for_status.side_effect = requests.HTTPError(
-            "503 Server Error", response=response
-        )
-        post_mock.return_value = response
 
         generate_photo_tags(self.caption)
         post_mock.assert_called_once()
 
     @override_settings(FEATURE_SCENE_CLASSIFICATION=False)
-    @patch("api.runtime.sidecars.http.post")
+    @patch("api.classification.caption_generator.generate")
     def test_tags_skipped_when_disabled(self, post_mock):
         generate_photo_tags(self.caption)
         post_mock.assert_not_called()
 
     @override_config(SCENE_CLASSIFICATION_ENABLED=False)
-    @patch("api.runtime.sidecars.http.post")
+    @patch("api.classification.caption_generator.generate")
     def test_tags_skipped_when_the_site_setting_is_off(self, post_mock):
         generate_photo_tags(self.caption)
         post_mock.assert_not_called()
@@ -228,19 +224,21 @@ class ImageCaptioningFeatureFlagTest(TestCase):
         self.photo = create_test_photo(owner=self.user)
         self.caption = PhotoCaption.objects.create(photo=self.photo)
 
-    @patch("api.classification.captioning.generate_caption", return_value="a cat")
+    @patch(
+        "api.classification.caption_generator.generate", return_value=("A cat", "cat")
+    )
     def test_captions_are_generated_by_default(self, generate_caption_mock):
         self.assertTrue(generate_photo_caption(self.caption))
         generate_caption_mock.assert_called_once()
 
     @override_settings(FEATURE_IMAGE_CAPTIONING=False)
-    @patch("api.classification.captioning.generate_caption")
+    @patch("api.classification.caption_generator.generate")
     def test_captions_skipped_when_disabled(self, generate_caption_mock):
         self.assertFalse(generate_photo_caption(self.caption))
         generate_caption_mock.assert_not_called()
 
     @override_config(IMAGE_CAPTIONING_ENABLED=False)
-    @patch("api.classification.captioning.generate_caption")
+    @patch("api.classification.caption_generator.generate")
     def test_captions_skipped_when_the_site_setting_is_off(self, generate_caption_mock):
         self.assertFalse(generate_photo_caption(self.caption))
         generate_caption_mock.assert_not_called()
@@ -462,7 +460,7 @@ class ScanPipelineFeatureFlagTest(TestCase):
     def test_every_job_is_queued_by_default(self):
         queued, chained = self._scan()
 
-        self.assertIn(generate_tags, queued)
+        self.assertIn(generate_im2txt_captions, queued)
         self.assertIn(add_geolocation, queued)
         self.assertIn(scan_faces, chained)
 
@@ -470,7 +468,7 @@ class ScanPipelineFeatureFlagTest(TestCase):
     def test_tagging_job_is_skipped_when_disabled(self):
         queued, _ = self._scan()
 
-        self.assertNotIn(generate_tags, queued)
+        self.assertIn(generate_im2txt_captions, queued)
         self.assertIn(add_geolocation, queued)
 
     @override_settings(FEATURE_REVERSE_GEOCODING=False)
@@ -478,7 +476,7 @@ class ScanPipelineFeatureFlagTest(TestCase):
         queued, _ = self._scan()
 
         self.assertNotIn(add_geolocation, queued)
-        self.assertIn(generate_tags, queued)
+        self.assertIn(generate_im2txt_captions, queued)
 
     @override_settings(FEATURE_FACE_DETECTION=False)
     def test_face_scan_is_skipped_when_disabled(self):
@@ -490,13 +488,14 @@ class ScanPipelineFeatureFlagTest(TestCase):
 
     @override_config(
         SCENE_CLASSIFICATION_ENABLED=False,
+        IMAGE_CAPTIONING_ENABLED=False,
         REVERSE_GEOCODING_ENABLED=False,
         FACE_DETECTION_ENABLED=False,
     )
     def test_the_site_settings_skip_the_same_jobs(self):
         queued, chained = self._scan()
 
-        self.assertNotIn(generate_tags, queued)
+        self.assertNotIn(generate_im2txt_captions, queued)
         self.assertNotIn(add_geolocation, queued)
         self.assertNotIn(scan_faces, chained + queued)
         self.assertIn(batch_calculate_clip_embedding, queued)
@@ -511,7 +510,7 @@ class ScanPipelineFeatureFlagTest(TestCase):
             queued, _ = self._scan()
 
         tagger_mock.assert_called_once()
-        self.assertNotIn(generate_tags, queued)
+        self.assertIn(generate_im2txt_captions, queued)
 
 
 def _save_in_another_process(key: str, value: bool) -> None:

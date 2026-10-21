@@ -1,56 +1,27 @@
-"""Regression tests for the "no model selected" guards in PhotoCaption.
-
-The constance choices for ``CAPTIONING_MODEL`` (and the frontend Select
-options) store the lowercase string ``"none"``, while older installs may carry
-the capitalised ``"None"``. Both spellings must disable captioning.
-"""
+"""A legacy None model setting does not gate the external caption container."""
 
 from unittest.mock import patch
 
 from constance.test import override_config
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from api.classification.captioning import generate_photo_caption
 from api.models import PhotoCaption
 from api.tests.utils import create_test_photo, create_test_user
 
 
-@override_settings(FEATURE_IMAGE_CAPTIONING=True)
 class CaptionModelNoneTest(TestCase):
-    def setUp(self):
-        self.user = create_test_user()
-        self.user.llm_settings = {
-            **self.user.llm_settings,
-            "enabled": True,
-        }
-        self.user.save()
-        # search_location makes create_test_photo build a PhotoSearch row, which
-        # the LLM prompt branch dereferences.
-        self.photo = create_test_photo(owner=self.user, search_location="Berlin")
-        self.caption = PhotoCaption.objects.create(photo=self.photo)
-
-    @override_config(CAPTIONING_MODEL="none")
-    @patch("api.classification.captioning.generate_caption")
-    def test_lowercase_none_captioning_model_disables_captioning(
-        self, mock_generate_caption
-    ):
-        """Selecting "None" in the UI stores "none" and must skip captioning."""
-        mock_generate_caption.return_value = "a photo of a cat"
-
-        result = generate_photo_caption(self.caption, commit=False)
-
-        self.assertFalse(result)
-        mock_generate_caption.assert_not_called()
-        self.assertNotIn("im2txt", self.caption.captions_json or {})
-
-    @override_config(CAPTIONING_MODEL="None")
-    @patch("api.classification.captioning.generate_caption")
-    def test_capitalized_none_captioning_model_disables_captioning(
-        self, mock_generate_caption
-    ):
-        mock_generate_caption.return_value = "a photo of a cat"
-
-        result = generate_photo_caption(self.caption, commit=False)
-
-        self.assertFalse(result)
-        mock_generate_caption.assert_not_called()
+    def test_both_none_spellings_generate_through_the_container(self):
+        photo = create_test_photo(owner=create_test_user())
+        caption, _ = PhotoCaption.objects.get_or_create(photo=photo)
+        for model in ("none", "None"):
+            with (
+                self.subTest(model=model),
+                override_config(CAPTIONING_MODEL=model),
+                patch(
+                    "api.classification.caption_generator.generate",
+                    return_value=("A cat", "cat"),
+                ) as generate,
+            ):
+                self.assertTrue(generate_photo_caption(caption, commit=False))
+            generate.assert_called_once()
