@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import logging
-import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 from django.db.models import Q
-from django.utils import timezone
 
 import api.models
 from api.search.semantic import OPENCLIP, TAG_THING_TYPE
@@ -62,68 +60,6 @@ class PhotoCaption(models.Model):
                 "Cannot access thumbnail path for photo %s", self.photo.image_hash
             )
             return None
-
-    def caption_context(
-        self, llm_settings: Mapping[str, object]
-    ) -> tuple[str | None, str | None] | None:
-        """(person name, location) for prompting, or None if off.
-
-        The user's caption-context switches (``llm_settings``, a historical
-        name) decide what the caption may know about the photo. The captioning
-        model takes that context in its prompt directly.
-        """
-        if not llm_settings["enabled"]:
-            return None
-
-        person_name: str | None = None
-        if llm_settings["add_person"]:
-            face = (
-                api.models.Face.objects.filter(photo=self.photo, person__isnull=False)
-                .select_related("person")
-                .first()
-            )
-            person_name = face.person.name if face and face.person is not None else None
-
-        location: str | None = None
-        if llm_settings["add_location"]:
-            # A photo that has not been through the scan yet has no search row.
-            try:
-                search_instance = self.photo.search_instance
-            except ObjectDoesNotExist:
-                search_instance = None
-            if search_instance and search_instance.search_location:
-                location = search_instance.search_location
-
-        return person_name, location
-
-    @staticmethod
-    def caption_prompt(context: tuple[str | None, str | None] | None) -> str:
-        """The prompt for the vision-language captioner, with what we know."""
-        if context is None:
-            return "Describe this image in a short, natural image caption."
-
-        person_name, location = context
-        person = ""
-        if person_name is not None:
-            person = (
-                f" The person in the photo is named {person_name}. "
-                f"Use the name '{person_name}' directly in the caption — do not say 'a person named'. "
-                f"Keep the caption casual and to the point, like a friend tagging a photo."
-            )
-        place = f" This photo was taken at {location}." if location is not None else ""
-        return "Write a short, natural image caption." + person + place
-
-    def store_generated_caption(
-        self, captions: dict[str, object], caption: str, commit: bool
-    ) -> None:
-        # Historical key: every generated caption, whichever model wrote it,
-        # lives under "im2txt" so the search index and the clients keep
-        # finding it.
-        captions["im2txt"] = caption
-        self.captions_json = captions
-        self.recreate_search_captions()
-        if commit:
-            self.save()
 
     def apply_user_caption(self, caption: str, commit: bool = True) -> str:
         """Set ``user_caption`` and everything that hangs off it.
@@ -219,24 +155,6 @@ class PhotoCaption(models.Model):
         self.recreate_search_captions()
         if commit:
             self.save()
-
-    def store_search_embedding(self, embedding: Sequence[float]) -> None:
-        """Store the tagger's image embedding as the photo's search embedding.
-
-        A queryset update of the embedding columns only: the photo row was
-        read before the sidecar call, and a save would write all of it back.
-        """
-        magnitude = math.sqrt(sum(value * value for value in embedding))
-        fields: dict[str, object] = {
-            "clip_embeddings": embedding,
-            "clip_embeddings_magnitude": magnitude,
-            "clip_embeddings_model": OPENCLIP,
-        }
-        api.models.Photo.objects.filter(pk=self.photo.pk).update(
-            **fields, last_modified=timezone.now()
-        )
-        for name, value in fields.items():
-            setattr(self.photo, name, value)
 
     def _update_tag_album_things(self, tag_result: dict[str, list[str]] | None) -> None:
         """Replace this photo's OpenCLIP tag-album memberships."""

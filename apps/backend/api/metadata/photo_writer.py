@@ -158,15 +158,43 @@ def caption_tags(
     return {Tags.DESCRIPTION_MWG: caption, native_tag: caption}
 
 
-def write_caption(photo: Photo, use_sidecar: bool) -> None:
-    """Write the photo's caption as its description (#2289).
+def write_caption_on_commit(photo: Photo) -> None:
+    """Persist a metadata PATCH's caption after commit without a queue delay.
 
-    The lightbox caption (``captions_json["user_caption"]``) as it is when the
-    write runs; a generated caption is never written. An empty caption removes
-    the description. Into the sidecar as ``XMP-dc:Description``; into the
+    Repeating a PATCH can repair a write that previously failed, even when the
+    caption in the database is already the requested value. Read the current
+    photo and owner's target when writing, as the background writer does.
+    """
+    if write_target(photo.owner) is None:
+        return
+
+    def write() -> None:
+        from api.models.photo import Photo
+
+        current = (
+            Photo.objects.select_related("main_file", "owner")
+            .filter(pk=photo.pk)
+            .first()
+        )
+        if current is None:
+            return
+        use_sidecar = write_target(current.owner)
+        if use_sidecar is not None:
+            write_caption(current, use_sidecar)
+
+    transaction.on_commit(write)
+
+
+def write_caption(photo: Photo, use_sidecar: bool) -> None:
+    """Write an explicit metadata PATCH's caption as its description (#2289).
+
+    Reads ``captions_json["user_caption"]`` as it is when the write runs, never
+    the generated ``im2txt`` field implicitly. An empty caption removes the
+    description. Into the sidecar as ``XMP-dc:Description``; into the
     media file through ExifTool's MWG composite, which also sets
     ``EXIF:ImageDescription`` and an ``IPTC:Caption-Abstract`` the file
-    already has (a file without IPTC gains none). Line breaks are kept.
+    already has (a file without IPTC gains none). Videos also receive
+    ``Keys:Description``. Line breaks are kept.
 
     Raises ``MetadataWriteError`` when ExifTool did not write it.
     """
@@ -346,7 +374,6 @@ def _write_rating(photo: Photo, use_sidecar: bool) -> None:
 #: The writer of each field ``api.metadata.jobs`` writes in the background.
 FIELD_WRITERS: dict[str, Callable[[Photo, bool], None]] = {
     "rating": _write_rating,
-    "caption": write_caption,
     "location": write_location,
 }
 

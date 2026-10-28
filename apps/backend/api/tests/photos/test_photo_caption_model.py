@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import requests
 from django.test import TestCase
@@ -39,8 +39,8 @@ class PhotoCaptionModelTest(TestCase):
         """Test generating im2txt captions"""
         caption = PhotoCaption.objects.create(photo=self.photo)
 
-        # This method requires thumbnail access which isn't available in tests
-        # We'll test that it returns False when no thumbnail is available
+        self.photo.thumbnail.thumbnail_big = ""
+        self.photo.thumbnail.save(update_fields=["thumbnail_big"])
         result = generate_photo_caption(caption, commit=False)
         self.assertFalse(result)
 
@@ -55,9 +55,9 @@ class PhotoCaptionModelTest(TestCase):
         """Test that generate_photo_tags skips if active model tags already exist"""
         caption = PhotoCaption.objects.create(photo=self.photo)
 
-        # Pre-populate tags for the default tagging model
         caption.captions_json = {
-            "openclip_vitb32": {"tags": ["outdoor", "landscape", "natural", "sunny"]}
+            "im2txt": "A landscape",
+            "im2txt_tag": "outdoor, landscape",
         }
         caption.save()
 
@@ -65,7 +65,7 @@ class PhotoCaptionModelTest(TestCase):
         generate_photo_tags(caption, commit=True)
         caption.refresh_from_db()
 
-        self.assertIn("openclip_vitb32", caption.captions_json)
+        self.assertIn("im2txt_tag", caption.captions_json)
 
     def test_recreate_search_captions_delegates_to_photo_search(self):
         """Test that recreate_search_captions delegates to PhotoSearch"""
@@ -148,76 +148,52 @@ class PhotoCaptionModelTest(TestCase):
         caption.save()
         self.assertEqual(caption.captions_json["user_caption"], "")
 
-    @patch("api.runtime.sidecars.http.post")
+    @patch("api.classification.caption_generator.generate")
     def test_generate_tag_captions_handles_error_response(self, mock_post):
         """Test that generate_photo_tags handles non-OK HTTP response gracefully"""
         caption = PhotoCaption.objects.create(photo=self.photo)
 
-        # Mock a 500 error response (e.g., when tag service fails on invalid image)
-        mock_response = MagicMock()
-        mock_response.ok = False
-        mock_response.status_code = 500
-        mock_response.raise_for_status.side_effect = requests.HTTPError(
-            "500 Server Error", response=mock_response
-        )
-        mock_post.return_value = mock_response
-
-        # Should return without crashing
-        generate_photo_tags(caption, commit=False)
+        mock_post.side_effect = requests.HTTPError("500 Server Error")
+        with self.assertRaises(requests.HTTPError):
+            generate_photo_tags(caption, commit=False)
 
         # captions_json should remain unchanged
         self.assertIsNone(caption.captions_json)
 
-    @patch("api.runtime.sidecars.http.post")
+    @patch("api.classification.caption_generator.generate")
     def test_generate_tag_captions_handles_non_json_response(self, mock_post):
         """Test that generate_photo_tags handles non-JSON response body gracefully"""
         caption = PhotoCaption.objects.create(photo=self.photo)
 
-        # Mock a response that returns OK but non-JSON body
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.side_effect = ValueError("No JSON object could be decoded")
-        mock_post.return_value = mock_response
-
-        # Should return without crashing
-        generate_photo_tags(caption, commit=False)
+        mock_post.side_effect = ValueError("No JSON object could be decoded")
+        with self.assertRaises(ValueError):
+            generate_photo_tags(caption, commit=False)
 
         # captions_json should remain unchanged
         self.assertIsNone(caption.captions_json)
 
-    @patch("api.runtime.sidecars.http.post")
+    @patch("api.classification.caption_generator.generate")
     def test_generate_tag_captions_handles_missing_tags_key(self, mock_post):
         """Test that generate_photo_tags handles JSON response without 'tags' key"""
         caption = PhotoCaption.objects.create(photo=self.photo)
 
-        # Mock a response with valid JSON but no "tags" key
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"error": "some error"}
-        mock_post.return_value = mock_response
-
-        # Should return without crashing
-        generate_photo_tags(caption, commit=False)
+        mock_post.side_effect = ValueError(
+            "Caption generator returned no caption or Things"
+        )
+        with self.assertRaises(ValueError):
+            generate_photo_tags(caption, commit=False)
 
         # captions_json should remain unchanged
         self.assertIsNone(caption.captions_json)
 
-    @patch("api.runtime.sidecars.http.post")
+    @patch("api.classification.caption_generator.generate")
     def test_generate_tag_captions_handles_400_response(self, mock_post):
         """Test that generate_photo_tags handles HTTP 400 (bad request) gracefully"""
         caption = PhotoCaption.objects.create(photo=self.photo)
 
-        # Mock a 400 response (e.g., malformed request)
-        mock_response = MagicMock()
-        mock_response.ok = False
-        mock_response.status_code = 400
-        mock_response.raise_for_status.side_effect = requests.HTTPError(
-            "400 Client Error", response=mock_response
-        )
-        mock_post.return_value = mock_response
-
-        # Should return without crashing
-        generate_photo_tags(caption, commit=False)
+        mock_post.side_effect = requests.HTTPError("400 Client Error")
+        with self.assertRaises(requests.HTTPError):
+            generate_photo_tags(caption, commit=False)
 
         # captions_json should remain unchanged
         self.assertIsNone(caption.captions_json)

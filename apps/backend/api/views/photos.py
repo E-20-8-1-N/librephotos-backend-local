@@ -23,7 +23,6 @@ from rest_framework.views import APIView
 from api.accounts.permissions import IsOwnerOrReadOnly, IsPhotoOrAlbumSharedTo
 from api.albums.timeline_filter import timeline_filter_q
 from api.classification import captioning
-from api.drf.exceptions import ServiceUnavailable
 from api.drf.pagination import (
     DefaultPagination,
     PhotoGridPagination,
@@ -51,11 +50,6 @@ from api.models.tag import refresh_tag_photo_counts, tag_ids_for_photos
 from api.photos.files import remove_photos
 from api.photos.selection import not_in_own_album_q
 from api.runtime.features import feature_enabled
-from api.runtime.ml_models import (
-    captioning_model_exists,
-    captioning_model_selected,
-    start_model_download,
-)
 from api.search.metadata_filter import no_location_q
 from api.serializers.album_user import (
     AlbumUserListSerializer,
@@ -87,10 +81,6 @@ from api.serializers.photos import (
 from api.views.custom_api_view import ListViewSet
 
 logger = logging.getLogger(__name__)
-
-# How long a client waits before asking for a caption again while the
-# captioning model downloads (the Retry-After of the 503).
-CAPTION_MODEL_RETRY_AFTER_SECONDS = 60
 
 
 def _get_photo_filter_kwargs(lookup_value: str) -> dict[str, str]:
@@ -921,10 +911,7 @@ class GeneratePhotoCaption(APIView):
 
     @extend_schema(request=PhotoCaptionRequest)
     def post(self, request: Request, format: str | None = None) -> Response:
-        # With "None" picked the captioner is never downloaded (#2218): asking
-        # for it below would start a download that skips it, answering
-        # model_downloading forever.
-        if not feature_enabled("IMAGE_CAPTIONING") or not captioning_model_selected():
+        if not feature_enabled("IMAGE_CAPTIONING"):
             raise PermissionDenied("Image captioning is disabled")
 
         image_hash = parse_body(request, PhotoCaptionRequest)["image_hash"]
@@ -936,17 +923,6 @@ class GeneratePhotoCaption(APIView):
         )
         if photo is None:
             raise NotFound("photo not found")
-
-        if not captioning_model_exists():
-            # The captioner is fetched with the other models, but a fresh
-            # install (or a model switch) can be asked for a caption before
-            # the download ran. Start it and tell the client to try again.
-            start_model_download(request_user(request))
-            raise ServiceUnavailable(
-                "The captioning model is being downloaded. Try again in a few minutes.",
-                code="model_downloading",
-                retry_after=CAPTION_MODEL_RETRY_AFTER_SECONDS,
-            )
 
         caption_instance, created = PhotoCaption.objects.get_or_create(photo=photo)
         res = captioning.generate_photo_caption(caption_instance)

@@ -129,7 +129,7 @@ class SimilarPhotosTest(TestCase):
 
 
 @override_settings(FEATURE_SCENE_CLASSIFICATION=True)
-class TagsStoreTheEmbeddingTest(TestCase):
+class ExternalTagsDoNotStoreEmbeddingsTest(TestCase):
     def setUp(self):
         self.photo = create_test_photo(owner=create_test_user())
         self.caption, _ = PhotoCaption.objects.get_or_create(photo=self.photo)
@@ -137,31 +137,29 @@ class TagsStoreTheEmbeddingTest(TestCase):
         self.caption.save()
 
     def _tag(self, body):
-        with patch("api.search.semantic.sidecars.post") as post:
-            post.return_value = _reply(body)
+        with patch(
+            "api.classification.caption_generator.generate",
+            return_value=("A beach", ", ".join(body["tags"]["tags"])),
+        ) as post:
             generate_photo_tags(self.caption, commit=True)
         return post
 
-    def test_one_run_gives_the_tags_and_the_search_embedding(self):
+    def test_one_run_gives_caption_and_things_without_a_search_embedding(self):
         post = self._tag({"tags": {"tags": ["beach"], "embedding": [3.0, 4.0]}})
 
-        sent = post.call_args.kwargs["json"]
-        self.assertTrue(sent["with_embedding"])
-        self.assertEqual(sent["tagging_model"], OPENCLIP)
+        self.assertEqual(".webp", post.call_args.args[1])
         self.photo.refresh_from_db()
-        self.assertEqual(self.photo.clip_embeddings, [3.0, 4.0])
-        self.assertEqual(self.photo.clip_embeddings_magnitude, 5.0)
-        self.assertEqual(self.photo.clip_embeddings_model, OPENCLIP)
+        self.assertIsNone(self.photo.clip_embeddings)
         caption = PhotoCaption.objects.get(photo=self.photo)
         # The vector is not kept with the tags.
-        self.assertEqual(caption.captions_json[OPENCLIP], {"tags": ["beach"]})
+        self.assertEqual(caption.captions_json["im2txt_tag"], "beach")
         self.assertEqual(
             list(
                 AlbumThing.objects.filter(photos=self.photo).values_list(
                     "title", "thing_type"
                 )
             ),
-            [("beach", semantic.TAG_THING_TYPE)],
+            [("beach", "caption_generator_tag")],
         )
 
     @override_settings(FEATURE_SCENE_CLASSIFICATION=False)

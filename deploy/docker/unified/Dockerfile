@@ -26,7 +26,7 @@ ARG GIT_HASH=unknown
 RUN yarn run build && echo "${GIT_HASH}" > dist/git_hash.txt
 
 # Second stage: Build the backend with frontend included
-FROM cetapod/librephotos_backend_base:latest
+FROM reallibrephotos/librephotos-base:${BASE_TAG}
 
 ARG DEBUG
 ARG MLVALIDATION

@@ -23,8 +23,9 @@ edit history that revert works from), bumps ``Photo.last_modified`` so the
 mobile delta feed and the clients' caches see the change, refreshes
 ``PhotoSearch`` where the field is indexed, and writes the value back to the
 file or sidecar when the owner syncs metadata to disk. Write-back covers the
-rating, the capture date, the caption (#2289) and the location (#2290);
-keywords and the text fields are not written to files yet.
+rating, the capture date and the location (#2290). Only the single-photo
+metadata PATCH writes captions; other caption edits stay in the database.
+Keywords and the text fields are not written to files yet.
 
 ``PhotoMetadata`` otherwise holds what the file says (camera, lens, exposure,
 size) and is filled by the scan, not by these setters.
@@ -320,24 +321,16 @@ def set_caption(photo: Photo, text: str, user: User) -> str:
     """Set the photo's caption, the one the lightbox shows; return it as stored.
 
     It is indexed for search and its #hashtags become hashtag albums
-    (``PhotoCaption.apply_user_caption``). A changed caption is written to the
-    file or sidecar as its description (#2289).
+    (``PhotoCaption.apply_user_caption``). This setter changes the database only;
+    the single-photo metadata PATCH explicitly requests caption persistence.
     """
-    stored, changed = _apply_caption(photo, text, user)
-    if changed:
-        queue_field_write(user, [photo.id], CAPTION)
-    return stored
-
-
-def _apply_caption(photo: Photo, text: str, user: User) -> tuple[str, bool]:
-    """``set_caption`` without the write-back; the caption and whether it changed."""
     caption_instance, _ = PhotoCaption.objects.get_or_create(photo=photo)
     old = (caption_instance.captions_json or {}).get("user_caption") or ""
     stored = caption_instance.apply_user_caption(text)
     if stored == old:
-        return stored, False
+        return stored
     _record(user, CAPTION, [Change(photo.id, old, stored)])
-    return stored, True
+    return stored
 
 
 # -------------------------------------------------------------------- keywords
@@ -376,12 +369,17 @@ def set_text_field(photo: Photo, field: str, value: str | None, user: User) -> N
 
 
 def apply_updates(
-    photos: QuerySet[Photo], updates: Mapping[str, object], user: User
+    photos: QuerySet[Photo],
+    updates: Mapping[str, object],
+    user: User,
+    *,
+    persist_caption: bool = False,
 ) -> list[Photo]:
     """Apply validated metadata API ``updates`` to ``photos``; return the photos.
 
     ``updates`` is the validated data of ``PhotoMetadataUpdateSerializer``:
-    ``rating``, ``caption``, ``keywords`` and the text fields.
+    ``rating``, ``caption``, ``keywords`` and the text fields. Only the
+    single-photo metadata PATCH opts into ``persist_caption``.
     """
     targets = list(photos)
     if not targets:
@@ -390,13 +388,11 @@ def apply_updates(
         rating = updates[RATING]
         assert isinstance(rating, int)
         set_rating(Photo.objects.filter(id__in=[p.id for p in targets]), rating, user)
-    captioned: list[uuid.UUID] = []
     for photo in targets:
         if CAPTION in updates:
             caption = updates[CAPTION]
             assert isinstance(caption, str)
-            if _apply_caption(photo, caption, user)[1]:
-                captioned.append(photo.id)
+            set_caption(photo, caption, user)
         if KEYWORDS in updates:
             keywords = updates[KEYWORDS]
             assert keywords is None or isinstance(keywords, list)
@@ -406,8 +402,11 @@ def apply_updates(
                 value = updates[field]
                 assert value is None or isinstance(value, str)
                 set_text_field(photo, field, value, user)
-    # One job writes every changed caption.
-    queue_field_write(user, captioned, CAPTION)
+    if persist_caption and CAPTION in updates:
+        from api.metadata.photo_writer import write_caption_on_commit
+
+        for photo in targets:
+            write_caption_on_commit(photo)
     return targets
 
 

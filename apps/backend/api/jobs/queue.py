@@ -30,7 +30,7 @@ import logging
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from django import db
 from django.db import transaction
@@ -131,7 +131,7 @@ def enqueue_chain(
     *,
     prerequisites: Sequence[Task] = (),
     exclusive: bool = True,
-    in_thread: bool = False,
+    dispatch: Literal["queue", "thread", "inline"] = "queue",
 ) -> list[LongRunningJob]:
     """Queue ``steps`` to run in order, each with its row, after ``prerequisites``.
 
@@ -141,6 +141,10 @@ def enqueue_chain(
     queued or running job of one of the steps' types. Prerequisites are tasks
     without a row passed here, such as ``download_models`` when models are
     missing (it writes its own row when it runs). Returns the rows in order.
+
+    ``dispatch="thread"`` starts an immediate orchestrator after commit;
+    ``dispatch="inline"`` completes a path-scoped integration action in the
+    request, after its job row commits, without waiting for a background worker.
     """
     if not steps:
         raise ValueError("enqueue_chain needs at least one step")
@@ -160,7 +164,7 @@ def enqueue_chain(
         ]
 
         def send() -> None:
-            if in_thread:
+            if dispatch != "queue":
 
                 def run_inline() -> None:
                     try:
@@ -177,14 +181,20 @@ def enqueue_chain(
                                 )
                     except Exception as error:
                         logger.exception("Immediate job orchestration failed")
+                        if dispatch == "inline":
+                            raise
                         for job in jobs:
                             job.fail(error=error)
                     finally:
-                        db.connections.close_all()
+                        if dispatch == "thread":
+                            db.connections.close_all()
 
-                threading.Thread(
-                    target=run_inline, name=f"job-{jobs[0].job_id}", daemon=True
-                ).start()
+                if dispatch == "inline":
+                    run_inline()
+                else:
+                    threading.Thread(
+                        target=run_inline, name=f"job-{jobs[0].job_id}", daemon=True
+                    ).start()
                 return
             if not prerequisites and len(steps) == 1:
                 step, job = steps[0], jobs[0]

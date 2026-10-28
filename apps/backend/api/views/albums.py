@@ -32,6 +32,7 @@ from api.drf.params import parse_body, parse_query
 from api.drf.request_user import request_user
 from api.faces.labels import relabel_faces
 from api.faces.merge import merge_people
+from api.faces.people import delete_person
 from api.models import (
     AlbumDate,
     AlbumPlace,
@@ -136,6 +137,9 @@ class PersonViewSet(
         )
 
         return qs
+
+    def perform_destroy(self, instance: Person) -> None:
+        delete_person(instance, request_user(self.request))
 
     @extend_schema(
         description=(

@@ -16,12 +16,15 @@ import ast
 import datetime
 import os
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
 
 from django.db import transaction
 from rest_framework.test import APIClient
 
+from api.classification.captioning import generate_external_caption
 from api.directory_watcher.file_handlers import _process_photo
+from api.directory_watcher.processing_jobs import generate_im2txt_job
 from api.faces.extractor import extract_from_exif
 from api.geocode.photo_location import geolocate_photo
 from api.metadata import edits
@@ -32,10 +35,12 @@ from api.metadata.photo_writer import rotate_photo, write_photo_metadata
 from api.metadata.reader import get_metadata
 from api.metadata.tags import Tags
 from api.metadata.writer import MetadataWriteError, write_metadata
+from api.models.album_thing import AlbumThing
 from api.models.person import Person
 from api.models.photo import Photo
 from api.models.photo_caption import PhotoCaption
-from api.models.photo_metadata import description_of
+from api.models.photo_metadata import MetadataEdit, description_of
+from api.models.photo_search import PhotoSearch
 from api.models.user import User
 from api.serializers.photos import PhotoEditSerializer
 from api.tests.metadata.exiftool_harness import (
@@ -305,8 +310,198 @@ class DateRoundTripTest(RealExifToolTestCase):
 CAPTION = "Golden Gate at dusk & fog\n\nSecond paragraph"
 
 
+class GeneratedMetadataRoundTripTest(RealExifToolTestCase):
+    """Generation is DB-only; a subsequent metadata PATCH persists the caption."""
+
+    def _generate(self, photo):
+        with (
+            patch(
+                "api.classification.caption_generator.generate",
+                return_value=(CAPTION, "cat, sofa"),
+            ),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            self.assertTrue(
+                generate_external_caption(
+                    PhotoCaption.objects.get_or_create(photo=photo)[0]
+                )
+            )
+
+    def test_generation_leaves_photos_and_videos_untouched_in_every_write_mode(self):
+        for video in (False, True):
+            for mode in (*MODES, OFF):
+                with self.subTest(video=video, mode=mode):
+                    self.exiftool.writes.clear()
+                    path = (
+                        self.make_video(f"generated-{mode}")
+                        if video
+                        else self.make_image(".jpg", f"generated-{mode}")
+                    )
+                    self.tag(path, "-XMP-dc:Subject=family")
+                    photo = self.photo_for(
+                        path, create_test_user(save_metadata_to_disk=mode), video=video
+                    )
+                    with self.assertUntouched(path):
+                        self._generate(photo)
+                    self._assert_generated(photo)
+
+    def _assert_generated(self, photo):
+        captions = PhotoCaption.objects.get(photo=photo).captions_json
+        self.assertEqual(CAPTION, captions["im2txt"])
+        self.assertEqual("cat, sofa", captions["im2txt_tag"])
+        self.assertNotIn("generated_metadata_pending", captions)
+        self.assertNotIn("generated_metadata_revision", captions)
+        self.assertIn(CAPTION, PhotoSearch.objects.get(photo=photo).search_captions)
+        self.assertEqual(
+            {"cat", "sofa"},
+            set(
+                AlbumThing.objects.owned_by(photo.owner)
+                .filter(photos=photo, thing_type="caption_generator_tag")
+                .values_list("title", flat=True)
+            ),
+        )
+
+    def test_existing_human_caption_and_file_metadata_are_preserved(self):
+        path = self.make_image(".jpg")
+        self.tag(
+            path, "-EXIF:ImageDescription=Camera description", "-IPTC:Keywords=family"
+        )
+        photo = self.photo_for(path, create_test_user(save_metadata_to_disk=MEDIA_FILE))
+        caption, _ = PhotoCaption.objects.get_or_create(photo=photo)
+        caption.captions_json = {"user_caption": "My caption"}
+        caption.save()
+        with self.assertUntouched(path):
+            self._generate(photo)
+        found = self.read_tags(path, Tags.IMAGE_DESCRIPTION, Tags.IPTC_KEYWORDS)
+        self.assertEqual("Camera description", found[Tags.IMAGE_DESCRIPTION])
+        self.assertEqual("family", found[Tags.IPTC_KEYWORDS])
+        self.assertEqual(
+            "My caption",
+            PhotoCaption.objects.get(photo=photo).captions_json["user_caption"],
+        )
+
+    def test_generation_leaves_an_existing_sidecar_untouched(self):
+        for video in (False, True):
+            with self.subTest(video=video):
+                path = self.make_video() if video else self.make_image(".jpg")
+                write_metadata(
+                    path,
+                    {
+                        Tags.DESCRIPTION_XMP: "Sidecar description",
+                        Tags.SUBJECT: ["family"],
+                    },
+                    use_sidecar=True,
+                )
+                self.assertWritesLanded()
+                self.exiftool.writes.clear()
+                sidecar = self.sidecar_of(path)
+                original = Path(path).read_bytes()
+                before = Path(sidecar).read_bytes()
+                photo = self.photo_for(
+                    path, create_test_user(save_metadata_to_disk=SIDECAR), video=video
+                )
+                self._generate(photo)
+                self.assertEqual(original, Path(path).read_bytes())
+                self.assertEqual(before, Path(sidecar).read_bytes())
+                self.assertWritesLanded(expected=0)
+
+    def test_manual_and_automatic_generation_write_only_after_metadata_patch(self):
+        for manual in (False, True):
+            for video in (False, True):
+                for mode in (*MODES, OFF):
+                    with self.subTest(manual=manual, video=video, mode=mode):
+                        self.exiftool.writes.clear()
+                        name = f"endpoint-{manual}-{mode}"
+                        path = (
+                            self.make_video(name)
+                            if video
+                            else self.make_image(".jpg", name)
+                        )
+                        photo = self.photo_for(
+                            path,
+                            create_test_user(save_metadata_to_disk=mode),
+                            video=video,
+                        )
+                        client = APIClient()
+                        client.force_authenticate(photo.owner)
+                        with (
+                            self.assertUntouched(path),
+                            patch(
+                                "api.classification.caption_generator.generate",
+                                return_value=(CAPTION, "cat, sofa"),
+                            ) as generate,
+                            patch(
+                                "api.runtime.ml_models.start_model_download"
+                            ) as download,
+                            self.captureOnCommitCallbacks(execute=True),
+                        ):
+                            if manual:
+                                response = client.post(
+                                    "/api/photosedit/generateim2txt/",
+                                    {"image_hash": photo.image_hash},
+                                    format="json",
+                                )
+                                self.assertEqual(200, response.status_code)
+                            else:
+                                generate_im2txt_job(photo.pk, "automatic-caption")
+                        generate.assert_called_once()
+                        download.assert_not_called()
+                        self._assert_generated(photo)
+                        with (
+                            self.assertUntouched(path),
+                            self.captureOnCommitCallbacks(execute=True),
+                        ):
+                            response = client.patch(
+                                f"/api/photos/{photo.pk}/metadata/",
+                                {"title": "An unrelated edit"},
+                                format="json",
+                            )
+                        self.assertEqual(200, response.status_code, response.content)
+                        with self.captureOnCommitCallbacks(execute=True):
+                            response = client.patch(
+                                f"/api/photos/{photo.pk}/metadata/",
+                                {"caption": CAPTION},
+                                format="json",
+                            )
+                        self.assertEqual(200, response.status_code, response.content)
+                        native = (
+                            Tags.KEYS_DESCRIPTION if video else Tags.IMAGE_DESCRIPTION
+                        )
+                        if mode == OFF:
+                            self.assertIsNone(self.read_tags(path, native)[native])
+                            self.assertFalse(os.path.exists(self.sidecar_of(path)))
+                            self.assertWritesLanded(expected=0)
+                        else:
+                            target = self.sidecar_of(path) if mode == SIDECAR else path
+                            tag = Tags.DESCRIPTION_XMP if mode == SIDECAR else native
+                            self.assertEqual(CAPTION, self.read_tags(target, tag)[tag])
+                            self.assertIsNone(
+                                self.read_tags(target, Tags.SUBJECT)[Tags.SUBJECT]
+                            )
+                            self.assertWritesLanded(expected=1)
+
+    def test_off_and_rollback_write_nothing(self):
+        path = self.make_image(".jpg")
+        photo = self.photo_for(path, create_test_user(save_metadata_to_disk=OFF))
+        with self.assertUntouched(path):
+            self._generate(photo)
+        photo.owner.save_metadata_to_disk = MEDIA_FILE
+        photo.owner.save(update_fields=["save_metadata_to_disk"])
+        with (
+            self.assertUntouched(path),
+            patch(
+                "api.classification.caption_generator.generate",
+                return_value=(CAPTION, "cat"),
+            ),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            with self.assertRaises(RuntimeError), transaction.atomic():
+                generate_external_caption(PhotoCaption.objects.get(photo=photo))
+                raise RuntimeError("roll back generated metadata")
+
+
 class CaptionRoundTripTest(RealExifToolTestCase):
-    """A caption edit (``edits.set_caption``) read back as the scan reads it (#2289)."""
+    """A metadata PATCH's caption read back as the scan reads it (#2289)."""
 
     def _photo(self, path, mode, **fields):
         return self.photo_for(
@@ -314,11 +509,13 @@ class CaptionRoundTripTest(RealExifToolTestCase):
         )
 
     def _caption(self, photo, text):
-        with (
-            patch("api.metadata.jobs.enqueue_task", run_now),
-            self.captureOnCommitCallbacks(execute=True),
-        ):
-            edits.set_caption(photo, text, photo.owner)
+        client = APIClient()
+        client.force_authenticate(photo.owner)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = client.patch(
+                f"/api/photos/{photo.pk}/metadata/", {"caption": text}, format="json"
+            )
+        self.assertEqual(200, response.status_code, response.content)
 
     def _description_the_scan_reads(self, photo):
         return description_of(read_file_values(photo))
@@ -395,8 +592,7 @@ class CaptionRoundTripTest(RealExifToolTestCase):
 
     def _caption_silently(self, photo, text):
         """A caption set while nothing is written."""
-        with patch("api.metadata.edits.queue_field_write"):
-            edits.set_caption(photo, text, photo.owner)
+        edits.set_caption(photo, text, photo.owner)
 
     def test_a_rescan_keeps_the_caption(self):
         path = self.make_image(".jpg")
@@ -429,13 +625,13 @@ class CaptionRoundTripTest(RealExifToolTestCase):
     def _user_caption(self, photo):
         return PhotoCaption.objects.get(photo=photo).captions_json["user_caption"]
 
-    def test_the_same_caption_again_writes_nothing(self):
+    def test_the_same_caption_patch_retries_the_write(self):
         photo = self._round_trip(self.make_image(".jpg"), SIDECAR)
         self.exiftool.writes.clear()
 
         self._caption(photo, CAPTION)
 
-        self.assertEqual([], self.exiftool.writes)
+        self.assertWritesLanded(expected=1)
 
     def test_nothing_is_written_when_off(self):
         path = self.make_image(".jpg")
@@ -443,19 +639,6 @@ class CaptionRoundTripTest(RealExifToolTestCase):
 
         with self.assertUntouched(path):
             self._caption(photo, CAPTION)
-
-    def test_a_rolled_back_edit_leaves_the_file_alone(self):
-        path = self.make_image(".jpg")
-        photo = self._photo(path, MEDIA_FILE)
-
-        with (
-            self.assertUntouched(path),
-            patch("api.metadata.jobs.enqueue_task", run_now),
-            self.captureOnCommitCallbacks(execute=True),
-        ):
-            with self.assertRaises(RuntimeError), transaction.atomic():
-                edits.set_caption(photo, CAPTION, photo.owner)
-                raise RuntimeError("the request fails after the save")
 
     def test_importing_the_file_description_writes_nothing(self):
         # The scan carries the file's description over to the caption
@@ -475,13 +658,14 @@ class CaptionRoundTripTest(RealExifToolTestCase):
 
                 self.assertEqual("From the camera", self._user_caption(photo))
 
-    def test_the_lightbox_caption_reaches_the_sidecar(self):
+    def test_the_lightbox_caption_leaves_the_sidecar_absent(self):
         path = self.make_image(".jpg")
         photo = self._photo(path, SIDECAR)
         client = APIClient()
         client.force_authenticate(user=photo.owner)
 
         with (
+            self.assertUntouched(path),
             patch("api.metadata.jobs.enqueue_task", run_now),
             self.captureOnCommitCallbacks(execute=True),
         ):
@@ -492,8 +676,8 @@ class CaptionRoundTripTest(RealExifToolTestCase):
             )
 
         self.assertEqual(200, response.status_code, response.content)
-        self.assertEqual(CAPTION, self._description_the_scan_reads(photo))
-        self.assertWritesLanded(expected=1)
+        self.assertIsNone(self._description_the_scan_reads(photo))
+        self.assertEqual(CAPTION, self._user_caption(photo))
 
     def test_metadata_api_caption_reaches_the_native_media_description(self):
         for video, native_tag in (
@@ -511,7 +695,7 @@ class CaptionRoundTripTest(RealExifToolTestCase):
                 client = APIClient()
                 client.force_authenticate(photo.owner)
                 with (
-                    patch("api.metadata.jobs.enqueue_task", run_now),
+                    patch("api.metadata.jobs.enqueue_task") as queued,
                     self.captureOnCommitCallbacks(execute=True),
                 ):
                     response = client.patch(
@@ -524,8 +708,120 @@ class CaptionRoundTripTest(RealExifToolTestCase):
                 self.assertEqual(path, self.exiftool.writes[0].target)
                 self.assertFalse(os.path.exists(self.sidecar_of(path)))
                 self.assertWritesLanded(expected=1)
+                queued.assert_not_called()
 
-    def test_lightbox_caption_reaches_and_clears_the_native_media_description(self):
+    def test_metadata_patch_retries_a_caption_already_in_the_database(self):
+        for video, native_tag in (
+            (False, Tags.IMAGE_DESCRIPTION),
+            (True, Tags.KEYS_DESCRIPTION),
+        ):
+            with self.subTest(video=video):
+                self.exiftool.writes.clear()
+                path = (
+                    self.make_video("retry-caption")
+                    if video
+                    else self.make_image(".jpg")
+                )
+                photo = self._photo(path, MEDIA_FILE, video=video)
+                self._caption_silently(photo, CAPTION)
+                client = APIClient()
+                client.force_authenticate(photo.owner)
+                with (
+                    patch("api.metadata.jobs.enqueue_task") as queued,
+                    self.captureOnCommitCallbacks(execute=True),
+                ):
+                    response = client.patch(
+                        f"/api/photos/{photo.pk}/metadata/",
+                        {"caption": CAPTION},
+                        format="json",
+                    )
+                self.assertEqual(200, response.status_code, response.content)
+                self.assertEqual(CAPTION, self.read_tags(path, native_tag)[native_tag])
+                self.assertEqual(
+                    1,
+                    MetadataEdit.objects.filter(
+                        photo=photo, field_name="caption"
+                    ).count(),
+                )
+                self.assertWritesLanded(expected=1)
+                queued.assert_not_called()
+
+    def test_metadata_patch_clears_native_photo_and_video_descriptions(self):
+        for video, native_tag in (
+            (False, Tags.IMAGE_DESCRIPTION),
+            (True, Tags.KEYS_DESCRIPTION),
+        ):
+            with self.subTest(video=video):
+                self.exiftool.writes.clear()
+                path = (
+                    self.make_video("clear-patch-caption")
+                    if video
+                    else self.make_image(".jpg")
+                )
+                photo = self._photo(path, MEDIA_FILE, video=video)
+                client = APIClient()
+                client.force_authenticate(photo.owner)
+                for text in (CAPTION, ""):
+                    with self.captureOnCommitCallbacks(execute=True):
+                        response = client.patch(
+                            f"/api/photos/{photo.pk}/metadata/",
+                            {"caption": text},
+                            format="json",
+                        )
+                    self.assertEqual(200, response.status_code, response.content)
+                    self.assertEqual(
+                        text or None, self.read_tags(path, native_tag)[native_tag]
+                    )
+                self.assertWritesLanded(expected=2)
+
+    def test_metadata_patch_honors_sidecar_and_off_modes(self):
+        for mode in (SIDECAR, OFF):
+            with self.subTest(mode=mode):
+                self.exiftool.writes.clear()
+                path = self.make_image(".jpg", f"patch-{mode}")
+                photo = self._photo(path, mode)
+                client = APIClient()
+                client.force_authenticate(photo.owner)
+                with (
+                    self._original_kept(path),
+                    self.captureOnCommitCallbacks(execute=True),
+                ):
+                    response = client.patch(
+                        f"/api/photos/{photo.pk}/metadata/",
+                        {"caption": CAPTION},
+                        format="json",
+                    )
+                self.assertEqual(200, response.status_code, response.content)
+                self.assertIsNone(
+                    self.read_tags(path, Tags.IMAGE_DESCRIPTION)[Tags.IMAGE_DESCRIPTION]
+                )
+                if mode == SIDECAR:
+                    self.assertEqual(
+                        CAPTION,
+                        self.read_tags(self.sidecar_of(path), Tags.DESCRIPTION_XMP)[
+                            Tags.DESCRIPTION_XMP
+                        ],
+                    )
+                    self.assertWritesLanded(expected=1)
+                else:
+                    self.assertWritesLanded(expected=0)
+
+    def test_rolled_back_metadata_patch_keeps_the_file_untouched(self):
+        path = self.make_image(".jpg")
+        photo = self._photo(path, MEDIA_FILE)
+        client = APIClient()
+        client.force_authenticate(photo.owner)
+        with self.assertUntouched(path), self.captureOnCommitCallbacks(execute=True):
+            with self.assertRaises(RuntimeError), transaction.atomic():
+                response = client.patch(
+                    f"/api/photos/{photo.pk}/metadata/",
+                    {"caption": CAPTION},
+                    format="json",
+                )
+                self.assertEqual(200, response.status_code)
+                raise RuntimeError("roll back the metadata patch")
+
+    def test_lightbox_caption_edits_leave_native_media_descriptions_untouched(self):
         for video, native_tag in (
             (False, Tags.IMAGE_DESCRIPTION),
             (True, Tags.KEYS_DESCRIPTION),
@@ -537,11 +833,13 @@ class CaptionRoundTripTest(RealExifToolTestCase):
                     if video
                     else self.make_image(".jpg")
                 )
+                self.tag(path, f"-{native_tag}=Camera description")
                 photo = self._photo(path, MEDIA_FILE, video=video)
                 client = APIClient()
                 client.force_authenticate(photo.owner)
                 for text in (CAPTION, ""):
                     with (
+                        self.assertUntouched(path),
                         patch("api.metadata.jobs.enqueue_task", run_now),
                         self.captureOnCommitCallbacks(execute=True),
                     ):
@@ -552,12 +850,13 @@ class CaptionRoundTripTest(RealExifToolTestCase):
                         )
                     self.assertEqual(200, response.status_code, response.content)
                     self.assertEqual(
-                        text or None, self.read_tags(path, native_tag)[native_tag]
+                        "Camera description",
+                        self.read_tags(path, native_tag)[native_tag],
                     )
                 self.assertFalse(os.path.exists(self.sidecar_of(path)))
-                self.assertWritesLanded(expected=2)
+                self.assertWritesLanded(expected=0)
 
-    def test_a_bulk_caption_is_one_job(self):
+    def test_bulk_captions_update_only_the_database(self):
         user = create_test_user(save_metadata_to_disk=SIDECAR)
         photos = [
             self.photo_for(self.make_image(".jpg", f"bulk-{index}"), user)
@@ -580,21 +879,37 @@ class CaptionRoundTripTest(RealExifToolTestCase):
             )
 
         self.assertEqual(200, response.status_code, response.content)
-        self.assertEqual(1, queued.call_count)
-        self.assertWritesLanded(expected=2)
+        queued.assert_not_called()
+        self.assertWritesLanded(expected=0)
         for photo in photos:
-            self.assertEqual(CAPTION, self._description_the_scan_reads(photo))
+            self.assertIsNone(self._description_the_scan_reads(photo))
+            self.assertEqual(CAPTION, self._user_caption(photo))
+            self.assertFalse(os.path.exists(self.sidecar_of(photo.main_file.path)))
+
+    def test_reverting_a_caption_updates_only_the_database(self):
+        path = self.make_image(".jpg")
+        photo = self._photo(path, MEDIA_FILE)
+        self._caption(photo, CAPTION)
+        edit = MetadataEdit.objects.get(photo=photo, field_name="caption")
+        client = APIClient()
+        client.force_authenticate(photo.owner)
+        self.exiftool.writes.clear()
+        with (
+            self.assertUntouched(path),
+            patch("api.metadata.jobs.enqueue_task", run_now),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            response = client.post(f"/api/photos/{photo.pk}/metadata/revert/{edit.pk}/")
+        self.assertEqual(200, response.status_code, response.content)
+        self.assertEqual("", self._user_caption(photo))
+        self.assertEqual(CAPTION, self._description_the_scan_reads(photo))
 
     def test_video_caption_is_written_to_keys_and_read_by_the_scan(self):
         path = self.make_video("caption")
         photo = self.photo_for(
             path, create_test_user(save_metadata_to_disk=MEDIA_FILE), video=True
         )
-        with (
-            patch("api.metadata.jobs.enqueue_task", run_now),
-            self.captureOnCommitCallbacks(execute=True),
-        ):
-            edits.set_caption(photo, CAPTION, photo.owner)
+        self._caption(photo, CAPTION)
         self.assertEqual(
             CAPTION, self.read_tags(path, Tags.KEYS_DESCRIPTION)[Tags.KEYS_DESCRIPTION]
         )
@@ -1470,7 +1785,12 @@ class WriteTargetGuardTest(RealExifToolTestCase):
                 self.captureOnCommitCallbacks(execute=True),
             ):
                 for photo in (image, video):
-                    edits.set_caption(photo, CAPTION, user)
+                    edits.apply_updates(
+                        Photo.objects.filter(pk=photo.pk),
+                        {"caption": CAPTION},
+                        user,
+                        persist_caption=True,
+                    )
                     edits.set_location(photo, LATITUDE, LONGITUDE, user)
 
     def test_the_guard_fails_a_tag_exiftool_leaves_unchanged(self):

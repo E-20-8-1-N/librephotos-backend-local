@@ -250,11 +250,8 @@ def _is_model_selected(model: MlModel) -> bool:
     """
     model_type = model["type"]
     if model_type == MlTypes.CAPTIONING:
-        return (
-            feature_enabled("IMAGE_CAPTIONING")
-            and captioning_model_selected()
-            and site_config.CAPTIONING_MODEL != "caption_generator"
-        )
+        # The external container owns its caption/tag model.
+        return False
     if model_type == MlTypes.CLIP:
         # Tags, semantic search and similar photos: always needed.
         return True
@@ -596,28 +593,10 @@ def do_all_models_exist() -> bool:
     return True
 
 
-def captioning_model_exists() -> bool:
-    """Whether every file of the captioner is on disk.
-
-    A caption request that reaches the sidecar without them fails inside
-    ONNX Runtime; the caller checks here first and starts the download.
-    """
-    if site_config.CAPTIONING_MODEL == "caption_generator":
-        return True
-    model_folder = _models_folder()
-    return all(
-        _model_target_exists(model_folder, model)
-        for model in ML_MODELS
-        if model["type"] == MlTypes.CAPTIONING
-    )
-
-
 # The features that run on a downloaded model, and that model's type. Face
 # clustering, reverse geocoding and video import need none.
 FEATURE_MODEL_TYPES: dict[Feature, str] = {
     "FACE_DETECTION": MlTypes.FACE_RECOGNITION,
-    "IMAGE_CAPTIONING": MlTypes.CAPTIONING,
-    "SCENE_CLASSIFICATION": MlTypes.CLIP,
 }
 
 
@@ -632,13 +611,6 @@ def feature_model_ready(
     """
     model_type = FEATURE_MODEL_TYPES.get(feature)
     if model_type is None:
-        return None
-    if (
-        feature in ("IMAGE_CAPTIONING", "SCENE_CLASSIFICATION")
-        and captioning_model == "caption_generator"
-    ):
-        return None
-    if model_type == MlTypes.CAPTIONING and _is_model_not_selected(captioning_model):
         return None
     model_folder = _models_folder()
     return all(

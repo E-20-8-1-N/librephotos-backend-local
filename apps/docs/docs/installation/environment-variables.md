@@ -28,10 +28,20 @@ backends. New PAM accounts are active staff/superusers, matching dev-upstream.
 The host PAM configuration and account files must be available inside the
 container. Access tokens last 60 minutes. New users default **Synchronize metadata
 to disk** to **Media File**; existing preferences are preserved.
-With **Media File**, caption edits made in the lightbox or metadata editor are
+With **Media File**, explicit single-photo metadata PATCH caption edits are
 written into the original photo's `EXIF:ImageDescription` or the original video's
 `Keys:Description`. **Sidecar File** writes the XMP sidecar instead. Clearing a
 caption removes that description from the selected target.
+
+`PATCH /api/photos/<photo_id>/metadata/` with `{"caption": "caption"}` persists
+the caption directly after the database edit commits. It uses
+`EXIF:ImageDescription` for a photo and `Keys:Description` for a video in
+**Media File** mode, without waiting for a background worker. Repeating the same
+PATCH retries the file write without adding another edit-history entry. A file
+write failure is reported as `metadata_write_failed`; the saved database value
+can be retried. **Sidecar File** and **Off** follow the owner's preference.
+Other caption edits, including lightbox, bulk and revert actions, update the
+database only. Only this PATCH with a `caption` field writes a caption to disk.
 
 The integration routes `POST /api/backendscanphotos/` and
 `POST /api/backenddeletemissingphotos/` accept `{"path": "/data/pool/home/alice/photo.jpg"}`.
@@ -41,16 +51,44 @@ home path, check its configured scan directory, and return `status`, `job_id`,
 forms accept the same JSON body. `/api/scanuploadedphotos/` starts an incremental
 scan; `/api/fullscanphotos/` remains a full rescan.
 
-Select `caption_generator` as **Captioning Model** (the fork default) for the
-external service, or `lfm2_vl_450m` for upstream's built-in captioner. The external
-service sees the same thumbnail paths as the backend. Its health endpoint is
+When the filesystem integration reports a removed file or folder, it calls
+`POST /api/backenddeletemissingphotos/` with the removed `path`. The path need
+not exist. Cleanup runs in that request, with a completed job record, rather
+than waiting behind captioning or other background work. It removes the
+affected photo and its related database rows, orphaned file/copy records, face
+crops, thumbnails and cached video conversions. Embedded motion previews are
+derived files and do not keep a deleted original alive.
+
+Only the notified path and its descendants in the resolved user's library are
+checked. A surviving original media variant or exact copy keeps the photo; a
+surviving variant becomes the main file if necessary. Repeated notifications
+are safe. Full-library scans still apply their missing-mount checks.
+
+Every **Scan Photos** job automatically queues a combined caption-and-Things job
+after thumbnails and metadata have finished. One request per photo produces
+both outputs. Missing captions and missing Things are picked up again on a
+later scan; completed outputs are reused.
+
+`POST /api/photosedit/generateim2txt/`, with `{"image_hash": "<photo hash>"}`,
+uses the same `caption-generator` container and explicitly regenerates both
+outputs. Neither path needs a local **Captioning Model** download or selection.
+The legacy model setting, including `None`, does not gate these requests. The
+image-captioning and scene-classification feature switches control the two
+outputs independently.
+
+The external service sees the same thumbnail paths as the backend. Its health endpoint is
 checked first; an existing Docker container with the configured host name is
 started if needed, when the backend has Docker access. `/rushgenerate` receives
 `file_path` and `file_ext`. Replies can contain `caption`, `objects` and `texts`,
 or embed the latter sections in the caption. Things are stored in `im2txt_tag`,
 indexed for search and added to Things albums. OpenCLIP remains available for
 semantic search. Turning off the caption or Thing feature suppresses that part
-of the response independently.
+of the response independently. Replies may also provide `tag` or `tags` fields.
+Both automatic and manual generation save their captions and Things in the
+LibrePhotos database only, regardless of **Synchronize metadata to disk**.
+Generation never writes descriptions or keywords into the original media or
+an XMP sidecar. To save a generated caption into file metadata, explicitly send
+it as the `caption` field of `PATCH /api/photos/<photo_id>/metadata/`.
 
 | Variable | `.env` key | Default | Purpose |
 | --- | --- | --- | --- |

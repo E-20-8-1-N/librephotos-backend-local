@@ -114,6 +114,7 @@ class ScanPhotosCharacterizationBase(TestCase):
             "FEATURE_SCENE_CLASSIFICATION": False,
             "FEATURE_REVERSE_GEOCODING": False,
             "FEATURE_FACE_DETECTION": False,
+            "FEATURE_IMAGE_CAPTIONING": False,
         }
         settings_overrides.update(flags or {})
 
@@ -462,7 +463,7 @@ class FollowUpTasksTest(ScanPhotosCharacterizationBase):
 
     def test_feature_flags_off_skip_optional_jobs(self):
         res = self.run_scan(walk_result=["/p/a.jpg"], finish_work=True)
-        self.assertEqual(res["tasks"].find(scan_jobs.generate_tags), [])
+        self.assertEqual(res["tasks"].find(scan_jobs.generate_im2txt_captions), [])
         self.assertEqual(res["tasks"].find(scan_jobs.add_geolocation), [])
         # Without face detection the embedding job is alone: no chain.
         self.assertIsNone(res["chain"])
@@ -481,7 +482,7 @@ class FollowUpTasksTest(ScanPhotosCharacterizationBase):
                 "FEATURE_FACE_DETECTION": True,
             },
         )
-        tags = res["tasks"].find(scan_jobs.generate_tags)
+        tags = res["tasks"].find(scan_jobs.generate_im2txt_captions)
         geo = res["tasks"].find(scan_jobs.add_geolocation)
         self.assertEqual(len(tags), 1)
         self.assertEqual(len(geo), 1)
@@ -491,7 +492,7 @@ class FollowUpTasksTest(ScanPhotosCharacterizationBase):
         self.assertNotIn("full_scan", tags[0][2])
         self.assertTrue(geo[0][2]["full_scan"])
         tags_job = LongRunningJob.objects.get(job_id=tags[0][2]["job_id"])
-        self.assertEqual(tags_job.job_type, LongRunningJob.JOB_GENERATE_TAGS)
+        self.assertEqual(tags_job.job_type, LongRunningJob.JOB_GENERATE_IM2TXT)
         self.assertIsNone(tags_job.started_at)
         chain_funcs = [entry[0] for entry in res["chain"].appended]
         self.assertEqual(
@@ -504,6 +505,22 @@ class FollowUpTasksTest(ScanPhotosCharacterizationBase):
         self.assertEqual(
             len(res["tasks"].find(scan_jobs.batch_calculate_clip_embedding)), 1
         )
+
+    def test_regular_scan_automatically_queues_combined_generation_after_ingestion(
+        self,
+    ):
+        flags = {"FEATURE_IMAGE_CAPTIONING": True, "FEATURE_SCENE_CLASSIFICATION": True}
+        pending = self.run_scan(walk_result=["/p/a.jpg"], flags=flags)
+        self.assertEqual([], pending["tasks"].find(scan_jobs.generate_im2txt_captions))
+        with (
+            override_settings(**flags),
+            patch("api.jobs.queue.AsyncTask", TaskRecorder(self.tasks)),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            self.finish_queued_work()
+        jobs = pending["tasks"].find(scan_jobs.generate_im2txt_captions)
+        self.assertEqual(1, len(jobs))
+        self.assertEqual((self.user,), jobs[0][1])
 
     # ---- follow-ups wait for the scan's own work ----------------------
 

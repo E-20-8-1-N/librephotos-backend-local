@@ -14,7 +14,7 @@ from django.db.models import Q
 from django.http import Http404
 from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.generics import get_object_or_404
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -27,6 +27,7 @@ from api.drf.pagination import PAGE_PARAMETERS, PaginatedViewMixin
 from api.drf.params import parse_body, parse_query
 from api.drf.request_user import request_user
 from api.metadata import edits
+from api.metadata.writer import MetadataWriteError
 from api.models import Photo
 from api.models.photo_metadata import MetadataEdit, PhotoMetadata
 from api.serializers.photo_metadata import (
@@ -124,11 +125,15 @@ class PhotoMetadataViewSet(PaginatedViewMixin, ViewSet):
 
         serializer = PhotoMetadataUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        edits.apply_updates(
-            Photo.objects.filter(pk=photo.pk),
-            serializer.validated_data,
-            request_user(request),
-        )
+        try:
+            edits.apply_updates(
+                Photo.objects.filter(pk=photo.pk),
+                serializer.validated_data,
+                request_user(request),
+                persist_caption=True,
+            )
+        except MetadataWriteError as error:
+            raise APIException(str(error), code="metadata_write_failed") from error
         return self._response(photo)
 
     @extend_schema(

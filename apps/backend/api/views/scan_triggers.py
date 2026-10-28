@@ -12,9 +12,10 @@ from rest_framework.views import APIView
 from api.accounts.home_scan import start_home_scan, user_from_path
 from api.albums.auto_albums import delete_missing_photos
 from api.directory_watcher import scan_photos
+from api.directory_watcher.scan_jobs import delete_removed_path
 from api.drf.params import parse_body
 from api.drf.request_user import request_user
-from api.jobs.queue import enqueue_job
+from api.jobs.queue import JobStep, enqueue_chain
 from api.jobs.start import start_job
 from api.models import LongRunningJob
 from api.models.user import User
@@ -148,8 +149,17 @@ class BackendDeleteMissingPhotosView(APIView):
         user, path = user_from_path(
             parse_body(request, BackendPathRequest)["path"], must_exist=False
         )
-        job = enqueue_job(
-            user, LongRunningJob.JOB_DELETE_MISSING_PHOTOS, delete_missing_photos, user
+        [job] = enqueue_chain(
+            user,
+            [
+                JobStep(
+                    LongRunningJob.JOB_DELETE_MISSING_PHOTOS,
+                    delete_removed_path,
+                    (user, path),
+                )
+            ],
+            exclusive=False,
+            dispatch="inline",
         )
         return Response(
             {

@@ -1,114 +1,52 @@
-"""Tests for ``api.classification.captioning.generate_caption``.
+"""The external container's HTTP contract and failure behavior."""
 
-The client is thin: one sidecar, one URL, an optional prompt. What is pinned
-is the exact payload, the timeout constant, and that errors propagate rather
-than being swallowed (the caller decides what a failed caption means).
-"""
-
-from unittest.mock import MagicMock, patch
+from unittest.mock import Mock, patch
 
 import requests
-from django.test import TestCase
+from django.test import SimpleTestCase, override_settings
 
-from api.classification.captioning import CaptionError, generate_caption
-from api.runtime.http_timeouts import CAPTION
-
-CAPTIONING_URL = "http://127.0.0.1:8007/generate-caption"
+from api.classification import caption_generator
+from api.drf.exceptions import ServiceUnavailable
 
 
-def _response(status_code=200, json_data=None, text=""):
-    response = MagicMock()
-    response.status_code = status_code
-    response.text = text
-    response.json.return_value = json_data if json_data is not None else {}
-    if status_code >= 400:
-        response.raise_for_status.side_effect = requests.HTTPError(
-            f"{status_code} Error", response=response
-        )
-    return response
-
-
-class GenerateCaptionTest(TestCase):
-    @patch("api.runtime.sidecars.http.post")
-    def test_happy_path_without_prompt(self, mock_post):
-        mock_post.return_value = _response(json_data={"caption": "a dog"})
-
-        result = generate_caption("/data/img.jpg")
-
-        self.assertEqual(result, "a dog")
-        mock_post.assert_called_once_with(
-            CAPTIONING_URL, json={"image_path": "/data/img.jpg"}, timeout=CAPTION
-        )
-
-    @patch("api.runtime.sidecars.http.post")
-    def test_prompt_is_forwarded(self, mock_post):
-        mock_post.return_value = _response(json_data={"caption": "Anna's dog"})
-
-        generate_caption("/data/img.jpg", prompt="The person is named Anna.")
-
+@override_settings(CAPTION_GENERATOR_RETRIES=0)
+class GenerateCaptionTest(SimpleTestCase):
+    def test_caption_and_tag_fields_are_returned_from_the_external_endpoint(
+        self,
+    ) -> None:
+        response = Mock(spec=requests.Response)
+        response.json.return_value = {"caption": "A dog", "tags": ["dog", "park"]}
+        with (
+            patch.object(caption_generator, "ensure_ready", return_value=True),
+            patch.object(
+                caption_generator.requests, "post", return_value=response
+            ) as post,
+        ):
+            self.assertEqual(
+                ("A dog", "dog, park"),
+                caption_generator.generate("/photo.webp", ".webp"),
+            )
+        self.assertIn("caption-generator:8020/rushgenerate", post.call_args.args[0])
         self.assertEqual(
-            mock_post.call_args.kwargs["json"],
-            {"image_path": "/data/img.jpg", "prompt": "The person is named Anna."},
+            {"file_path": "/photo.webp", "file_ext": ".webp"},
+            post.call_args.kwargs["json"],
         )
 
-    @patch("api.runtime.sidecars.http.post")
-    def test_empty_prompt_is_still_sent(self, mock_post):
-        """Only ``None`` means "no prompt"; an empty string is the caller's choice."""
-        mock_post.return_value = _response(json_data={"caption": "x"})
+    def test_connection_error_propagates_without_an_unbounded_retry(self) -> None:
+        with (
+            patch.object(caption_generator, "ensure_ready", return_value=True),
+            patch.object(
+                caption_generator.requests, "post", side_effect=requests.ConnectionError
+            ),
+            self.assertRaises(requests.ConnectionError),
+        ):
+            caption_generator.generate("/photo.webp", ".webp")
 
-        generate_caption("/data/img.jpg", prompt="")
-
-        self.assertEqual(mock_post.call_args.kwargs["json"]["prompt"], "")
-
-    @patch("api.runtime.sidecars.http.post")
-    def test_connection_error_propagates(self, mock_post):
-        mock_post.side_effect = requests.exceptions.ConnectionError("refused")
-
-        with self.assertRaises(requests.exceptions.ConnectionError):
-            generate_caption("/data/img.jpg")
-
-    @patch("api.runtime.sidecars.http.post")
-    def test_sidecar_error_reply_raises_caption_error_with_its_message(self, mock_post):
-        """The sidecar's reason must reach the backend log, not a KeyError."""
-        mock_post.return_value = _response(
-            status_code=500,
-            json_data={"error": "NoSuchFile: vision_encoder_q4f16.onnx"},
-        )
-
-        with self.assertRaises(CaptionError) as raised:
-            generate_caption("/data/img.jpg")
-
-        self.assertEqual(
-            str(raised.exception),
-            "captioning sidecar returned HTTP 500: "
-            "NoSuchFile: vision_encoder_q4f16.onnx",
-        )
-
-    @patch("api.runtime.sidecars.http.post")
-    def test_success_status_without_caption_key_raises_caption_error(self, mock_post):
-        mock_post.return_value = _response(json_data={"something": "else"})
-
-        with self.assertRaises(CaptionError) as raised:
-            generate_caption("/data/img.jpg")
-
-        self.assertIn("HTTP 200", str(raised.exception))
-        self.assertIn("no caption in reply", str(raised.exception))
-
-    @patch("api.runtime.sidecars.http.post")
-    def test_non_json_error_reply_uses_the_body_text(self, mock_post):
-        """A 400 from a malformed request comes back as an empty body."""
-        response = _response(status_code=400, text="")
-        response.json.side_effect = ValueError("no json")
-        mock_post.return_value = response
-
-        with self.assertRaises(CaptionError) as raised:
-            generate_caption("/data/img.jpg")
-
-        self.assertEqual(
-            str(raised.exception),
-            "captioning sidecar returned HTTP 400: no caption in reply",
-        )
-
-    def test_caption_error_is_a_runtime_error(self):
-        """Callers that catch ``Exception`` keep working; nothing narrower breaks."""
-        self.assertTrue(issubclass(CaptionError, RuntimeError))
+    def test_unhealthy_container_does_not_receive_generation_requests(self) -> None:
+        with (
+            patch.object(caption_generator, "ensure_ready", return_value=False),
+            patch.object(caption_generator.requests, "post") as post,
+            self.assertRaisesRegex(ServiceUnavailable, "unavailable"),
+        ):
+            caption_generator.generate("/photo.webp", ".webp")
+        post.assert_not_called()

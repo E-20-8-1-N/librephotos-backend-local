@@ -22,7 +22,6 @@ from api.runtime.ml_models import (
     _is_model_selected,
     _iter_required_models,
     _model_target_exists,
-    captioning_model_exists,
     do_all_models_exist,
     download_model,
     download_models,
@@ -71,6 +70,7 @@ def _create_captioner(model_root: Path):
         (model_root / "lfm2_vl_450m" / filename).write_bytes(b"model")
 
 
+@override_config(OCR_MODEL="none")
 class MlModelsTest(TestCase):
     def _create_required_models(self, model_root: Path):
         _create_openclip(model_root)
@@ -313,6 +313,7 @@ class DownloadModelFailureTest(TestCase):
             self.assertFalse(_model_target_exists(model_folder, model))
 
 
+@override_config(OCR_MODEL="none")
 class DownloadModelsJobTest(TestCase):
     def setUp(self):
         self.user = create_test_user()
@@ -569,6 +570,7 @@ class DownloadModelChecksumTest(TestCase):
             self.assertFalse(_model_target_exists(model_folder, model))
 
 
+@override_config(OCR_MODEL="none", FACE_RECOGNITION_MODEL="buffalo_sc")
 class MlModelSelectionTest(TestCase):
     def _selected_model_names(self):
         return [model["name"] for model in _iter_required_models()]
@@ -580,18 +582,13 @@ class MlModelSelectionTest(TestCase):
         (selected_face_model / "w600k_mbf.onnx").write_bytes(b"model")
 
     @override_config(
-        CAPTIONING_MODEL="none",
-        FACE_RECOGNITION_MODEL="buffalo_sc",
+        CAPTIONING_MODEL="none", FACE_RECOGNITION_MODEL="buffalo_sc", OCR_MODEL="none"
     )
-    def test_captioning_model_exists_needs_every_file(self):
+    def test_captioning_needs_no_local_captioner_files(self):
         with tempfile.TemporaryDirectory() as tmp:
-            model_root = Path(tmp) / "data_models"
+            self._create_required_models(Path(tmp) / "data_models")
             with override_settings(MEDIA_ROOT=tmp):
-                self.assertFalse(captioning_model_exists())
-                _create_captioner(model_root)
-                self.assertTrue(captioning_model_exists())
-                (model_root / "lfm2_vl_450m" / LFM_FILES[-2]).unlink()
-                self.assertFalse(captioning_model_exists())
+                self.assertTrue(do_all_models_exist())
 
     @patch("api.jobs.queue.AsyncTask")
     def test_start_model_download_queues_one_job(self, async_task):
@@ -628,21 +625,22 @@ class MlModelSelectionTest(TestCase):
 
         async_task.assert_not_called()
 
-    def test_do_all_models_exist_requires_every_captioner_file(self):
+    def test_do_all_models_exist_is_independent_of_captioner_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             media_root = Path(temp_dir) / "protected_media"
             model_root = media_root / "data_models"
             self._create_required_models(model_root)
 
             with override_settings(MEDIA_ROOT=str(media_root)):
-                self.assertFalse(do_all_models_exist())
+                self.assertTrue(do_all_models_exist())
                 _create_captioner(model_root)
                 self.assertTrue(do_all_models_exist())
                 # Every file counts, the weights next to the graphs included.
                 (model_root / "lfm2_vl_450m" / "tokenizer.json").unlink()
-                self.assertFalse(do_all_models_exist())
+                self.assertTrue(do_all_models_exist())
 
 
+@override_config(OCR_MODEL="none")
 class DisabledFeatureModelSelectionTest(TestCase):
     """A feature that is turned off downloads no model (#2218).
 
@@ -667,8 +665,8 @@ class DisabledFeatureModelSelectionTest(TestCase):
         ]
 
     @override_config(CAPTIONING_MODEL="lfm2_vl_450m")
-    def test_captioner_is_selected_when_captioning_is_on_and_a_model_is_picked(self):
-        self.assertIn("lfm2_vl_450m", self._selected_model_names())
+    def test_captioner_is_not_selected_even_with_a_legacy_model_picked(self):
+        self.assertNotIn("lfm2_vl_450m", self._selected_model_names())
 
     @override_config(CAPTIONING_MODEL="none")
     def test_captioner_is_not_selected_while_no_captioning_model_is_picked(self):

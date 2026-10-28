@@ -9,7 +9,10 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Iterable
+from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
+
+from django.db import transaction
 
 from api.models.file import File
 from api.video import transcode_cache
@@ -41,7 +44,62 @@ def missing_on_disk(photo: Photo) -> bool:
     }
     if photo.main_file is not None and photo.main_file.type != File.METADATA_FILE:
         media.setdefault(photo.main_file.pk, photo.main_file)
+    embedded = set(
+        File.embedded_media.through.objects.filter(to_file_id__in=media).values_list(
+            "to_file_id", flat=True
+        )
+    )
+    media = {key: file for key, file in media.items() if key not in embedded}
     return not any(_on_disk(file) for file in media.values())
+
+
+def delete_unreferenced_files(file_ids: Iterable[str]) -> int:
+    """Remove detached File rows and unreferenced embedded previews.
+
+    The caller selects the file ids through owned photos. A row another photo
+    or parent file still uses is kept. Only derived embedded media is removed
+    from disk; surviving originals and sidecars are never unlinked here.
+    """
+    ids = set(file_ids)
+    embedded = set(
+        File.embedded_media.through.objects.filter(from_file_id__in=ids).values_list(
+            "to_file_id", flat=True
+        )
+    )
+    ids.update(embedded)
+    deleted = 0
+    with transaction.atomic():
+        # Parents go first; the next pass can then remove their orphaned children.
+        for _ in range(2):
+            used_as_embedded = File.embedded_media.through.objects.values_list(
+                "to_file_id", flat=True
+            )
+            orphaned = list(
+                File.objects.filter(
+                    pk__in=ids, photo__isnull=True, main_photo__isnull=True
+                )
+                .exclude(pk__in=used_as_embedded)
+                .distinct()
+            )
+            if not orphaned:
+                break
+            File.objects.filter(pk__in=[file.pk for file in orphaned]).delete()
+            deleted += len(orphaned)
+            for file in orphaned:
+                if file.pk in embedded:
+                    transaction.on_commit(partial(_remove_embedded_file, file.path))
+                ids.discard(file.pk)
+    return deleted
+
+
+def _remove_embedded_file(path: str) -> None:
+    if File.objects.filter(path=path).exists():
+        return
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        logger.warning("Could not remove an orphaned embedded preview")
 
 
 def _on_disk(file: File) -> bool:

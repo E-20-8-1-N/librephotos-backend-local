@@ -7,6 +7,7 @@ from django.db.models import OuterRef, QuerySet
 from rest_framework import serializers
 
 from api.drf.request_user import request_user
+from api.faces.people import rename_person
 from api.models import Face, Person, Photo, User
 
 logger = logging.getLogger(__name__)
@@ -134,8 +135,7 @@ class PersonSerializer(serializers.ModelSerializer):
     def update(self, instance: Person, validated_data: dict[str, Any]) -> Person:
         if "newPersonName" in validated_data.keys():
             new_name = validated_data.pop("newPersonName")
-            instance.name = new_name
-            instance.save()
+            rename_person(instance, self._requester(), new_name)
             return instance
         if "cover_photo" in validated_data.keys():
             photo_ref = validated_data.pop("cover_photo")

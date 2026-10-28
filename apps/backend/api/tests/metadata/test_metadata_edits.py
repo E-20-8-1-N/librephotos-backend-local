@@ -12,13 +12,14 @@ import datetime
 import os
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
 from api.metadata import edits
 from api.metadata.jobs import queue_field_write, write_photo_fields
 from api.metadata.reader import MetadataReadError
+from api.metadata.writer import MetadataWriteError
 from api.models import Photo, User
 from api.models.album_place import AlbumPlace
 from api.models.album_thing import AlbumThing
@@ -130,7 +131,70 @@ class RatingTest(MetadataApiTestCase):
             with self.subTest(rating=rating):
                 response = self.patch_metadata({"rating": rating})
                 self.assertEqual(response.status_code, 400)
-                self.assertEqual(response.json()["errors"][0]["field"], "rating")
+        self.assertEqual(response.json()["errors"][0]["field"], "rating")
+
+
+class MetadataCaptionImmediateWriteTest(TransactionTestCase):
+    """A single-photo PATCH completes caption persistence during the request."""
+
+    def setUp(self):
+        self.user = create_test_user(save_metadata_to_disk=User.SaveMetadata.MEDIA_FILE)
+        self.photo = create_test_photo(owner=self.user)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.url = f"/api/photos/{self.photo.pk}/metadata/"
+
+    def test_successful_patch_does_not_wait_for_a_background_worker(self):
+        with (
+            patch("api.metadata.photo_writer.write_caption") as write,
+            patch("api.metadata.jobs.enqueue_task") as queued,
+        ):
+            response = self.client.patch(
+                self.url, {"caption": "caption"}, format="json"
+            )
+        self.assertEqual(200, response.status_code)
+        write.assert_called_once()
+        self.assertEqual(self.photo.pk, write.call_args.args[0].pk)
+        self.assertFalse(write.call_args.args[1])
+        queued.assert_not_called()
+
+    def test_failed_file_write_is_reported_and_same_caption_can_be_retried(self):
+        with patch(
+            "api.metadata.photo_writer.write_caption",
+            side_effect=MetadataWriteError(
+                self.photo.main_file.path, "cannot write metadata"
+            ),
+        ):
+            response = self.client.patch(
+                self.url, {"caption": "caption"}, format="json"
+            )
+        self.assertEqual(500, response.status_code)
+        self.assertEqual("metadata_write_failed", response.json()["errors"][0]["code"])
+        self.assertEqual(
+            "caption",
+            PhotoCaption.objects.get(photo=self.photo).captions_json["user_caption"],
+        )
+        with patch("api.metadata.photo_writer.write_caption") as write:
+            retry = self.client.patch(self.url, {"caption": "caption"}, format="json")
+        self.assertEqual(200, retry.status_code)
+        write.assert_called_once()
+        self.assertEqual(
+            1,
+            MetadataEdit.objects.filter(photo=self.photo, field_name="caption").count(),
+        )
+
+    def test_admin_edit_uses_the_photos_owners_write_target(self):
+        admin = create_test_user(
+            is_admin=True, save_metadata_to_disk=User.SaveMetadata.OFF
+        )
+        self.client.force_authenticate(admin)
+        with patch("api.metadata.photo_writer.write_caption") as write:
+            response = self.client.patch(
+                self.url, {"caption": "caption"}, format="json"
+            )
+        self.assertEqual(200, response.status_code)
+        write.assert_called_once()
+        self.assertFalse(write.call_args.args[1])
 
 
 class CaptionTest(MetadataApiTestCase):
@@ -625,19 +689,20 @@ class QueuedFieldWriteTest(TestCase):
         self.photo = create_test_photo(owner=self.user)
 
     def test_a_field_without_a_writer_is_refused(self):
-        with self.assertRaises(ValueError):
-            queue_field_write(self.user, [self.photo.id], "keywords")
+        for field in ("keywords", "caption"):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                queue_field_write(self.user, [self.photo.id], field)
 
     def test_the_job_is_queued_after_the_commit(self):
         with patch("api.metadata.jobs.enqueue_task") as queued:
             with self.captureOnCommitCallbacks() as callbacks:
-                queue_field_write(self.user, [self.photo.id], "caption")
+                queue_field_write(self.user, [self.photo.id], "location")
             queued.assert_not_called()
             for callback in callbacks:
                 callback()
 
         queued.assert_called_once_with(
-            write_photo_fields, [self.photo.id], "caption", False
+            write_photo_fields, [self.photo.id], "location", False
         )
 
     def test_a_failure_to_queue_is_logged(self):
@@ -655,7 +720,7 @@ class QueuedFieldWriteTest(TestCase):
         self.user.refresh_from_db()
 
         with self.captureOnCommitCallbacks() as callbacks:
-            queue_field_write(self.user, [self.photo.id], "caption")
+            queue_field_write(self.user, [self.photo.id], "location")
 
         self.assertEqual([], callbacks)
 
@@ -664,16 +729,16 @@ class QueuedFieldWriteTest(TestCase):
             raise RuntimeError("bug")
 
         with (
-            patch.dict("api.metadata.photo_writer.FIELD_WRITERS", caption=broken),
+            patch.dict("api.metadata.photo_writer.FIELD_WRITERS", location=broken),
             self.assertLogs("api.metadata.jobs", "ERROR"),
         ):
-            failures = write_photo_fields([self.photo.id], "caption", False)
+            failures = write_photo_fields([self.photo.id], "location", False)
 
         self.assertEqual(1, failures)
 
-    def test_a_caption_whose_description_cannot_be_read_back_still_counts(self):
-        edits._apply_caption(self.photo, "typed", self.user)
-
+    def test_a_patch_whose_description_cannot_be_read_back_still_succeeds(self):
+        client = APIClient()
+        client.force_authenticate(self.user)
         with (
             patch("api.metadata.photo_writer.write_metadata") as write,
             patch(
@@ -681,10 +746,15 @@ class QueuedFieldWriteTest(TestCase):
                 side_effect=MetadataReadError("exif service down"),
             ),
             self.assertLogs("api.metadata.photo_writer", "WARNING"),
+            self.captureOnCommitCallbacks(execute=True),
         ):
-            failures = write_photo_fields([self.photo.id], "caption", False)
+            response = client.patch(
+                f"/api/photos/{self.photo.pk}/metadata/",
+                {"caption": "typed"},
+                format="json",
+            )
 
-        self.assertEqual(0, failures)
+        self.assertEqual(200, response.status_code)
         write.assert_called_once()
         captions = PhotoCaption.objects.get(photo=self.photo).captions_json
         self.assertNotIn(IMPORTED_DESCRIPTION_KEY, captions)
